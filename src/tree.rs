@@ -73,9 +73,8 @@ impl Tree {
 
     fn pre_order_into(&self, start: NodeId, result: &mut Vec<NodeId>) {
         result.push(start);
-        // Clone the children vec to avoid borrow conflicts during recursion.
-        let children = self.nodes[start].children.clone();
-        for c in children {
+        for i in 0..self.nodes[start].children.len() {
+            let c = self.nodes[start].children[i];
             self.pre_order_into(c, result);
         }
     }
@@ -88,8 +87,8 @@ impl Tree {
     }
 
     fn post_order_into(&self, start: NodeId, result: &mut Vec<NodeId>) {
-        let children = self.nodes[start].children.clone();
-        for c in children {
+        for i in 0..self.nodes[start].children.len() {
+            let c = self.nodes[start].children[i];
             self.post_order_into(c, result);
         }
         result.push(start);
@@ -112,8 +111,8 @@ impl Tree {
     /// All proper descendants of `start` (excluding `start` itself).
     pub fn descendants(&self, start: NodeId) -> Vec<NodeId> {
         let mut result = Vec::with_capacity(self.nodes[start].size.saturating_sub(1));
-        let children = self.nodes[start].children.clone();
-        for c in children {
+        for i in 0..self.nodes[start].children.len() {
+            let c = self.nodes[start].children[i];
             result.push(c);
             self.descendants_into(c, &mut result);
         }
@@ -121,8 +120,8 @@ impl Tree {
     }
 
     fn descendants_into(&self, start: NodeId, result: &mut Vec<NodeId>) {
-        let children = self.nodes[start].children.clone();
-        for c in children {
+        for i in 0..self.nodes[start].children.len() {
+            let c = self.nodes[start].children[i];
             result.push(c);
             self.descendants_into(c, result);
         }
@@ -139,20 +138,21 @@ impl Tree {
         // Post-order ensures children are processed before parents.
         let order = self.post_order(self.root);
         for id in order {
-            let children = self.nodes[id].children.clone();
+            let num_children = self.nodes[id].children.len();
 
             // Height and size.
-            if children.is_empty() {
+            if num_children == 0 {
                 self.nodes[id].height = 1;
                 self.nodes[id].size = 1;
             } else {
                 let mut max_h = 0;
                 let mut total_size = 1usize;
-                for c in &children {
-                    if self.nodes[*c].height > max_h {
-                        max_h = self.nodes[*c].height;
+                for i in 0..num_children {
+                    let c = self.nodes[id].children[i];
+                    if self.nodes[c].height > max_h {
+                        max_h = self.nodes[c].height;
                     }
-                    total_size += self.nodes[*c].size;
+                    total_size += self.nodes[c].size;
                 }
                 self.nodes[id].height = max_h + 1;
                 self.nodes[id].size = total_size;
@@ -162,8 +162,9 @@ impl Tree {
             let mut hasher = DefaultHasher::new();
             self.nodes[id].kind.hash(&mut hasher);
             self.nodes[id].label.hash(&mut hasher);
-            for c in &children {
-                self.nodes[*c].hash.hash(&mut hasher);
+            for i in 0..num_children {
+                let c = self.nodes[id].children[i];
+                self.nodes[c].hash.hash(&mut hasher);
             }
             self.nodes[id].hash = hasher.finish();
         }

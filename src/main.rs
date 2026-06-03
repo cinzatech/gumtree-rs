@@ -59,15 +59,25 @@ fn main() -> ExitCode {
             .to_string()
     });
 
+    // Try extension first, then fall back to filename (for Dockerfile, Makefile, etc.).
     let profile = match languages::profile_for_ext(&ext) {
         Some(p) => p,
         None => {
-            eprintln!(
-                "unsupported file extension: .{}\nsupported: {}",
-                ext,
-                languages::supported_extensions().join(", ")
-            );
-            return ExitCode::from(2);
+            let filename = Path::new(old_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            match languages::profile_for_filename(filename) {
+                Some(p) => p,
+                None => {
+                    eprintln!(
+                        "unsupported file extension: .{}\nsupported: {}",
+                        ext,
+                        languages::supported_extensions().join(", ")
+                    );
+                    return ExitCode::from(2);
+                }
+            }
         }
     };
 

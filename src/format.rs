@@ -3,6 +3,8 @@
 //! The node string uses GumTree's `Kind: label [start,end]` (or `Kind [start,end]`
 //! when label is empty) so consumers familiar with the Java output can read it.
 
+use serde::Serialize;
+
 use crate::actions::Action;
 use crate::mapping::Mapping;
 use crate::tree::{Node, Tree};
@@ -19,117 +21,111 @@ pub fn format_node(node: &Node) -> String {
     }
 }
 
+// ----- Serializable output types -----
+
+#[derive(Serialize)]
+struct DiffOutput {
+    matches: Vec<MatchEntry>,
+    actions: Vec<ActionEntry>,
+}
+
+#[derive(Serialize)]
+struct MatchEntry {
+    src: String,
+    dest: String,
+}
+
+#[derive(Serialize)]
+struct ActionEntry {
+    action: &'static str,
+    tree: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    at: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+}
+
 /// Serialises the full diff result to a JSON string mirroring GumTree's `-f JSON`
 /// output: `{"matches": [...], "actions": [...]}`.
 pub fn to_json(t1: &Tree, t2: &Tree, mapping: &Mapping, actions: &[Action]) -> String {
-    let mut out = String::new();
-    out.push_str("{\n");
+    let matches: Vec<MatchEntry> = mapping
+        .pairs()
+        .iter()
+        .map(|(src, dst)| MatchEntry {
+            src: format_node(t1.node(*src)),
+            dest: format_node(t2.node(*dst)),
+        })
+        .collect();
 
-    // matches
-    out.push_str("  \"matches\": [");
-    let pairs = mapping.pairs();
-    if !pairs.is_empty() {
-        out.push('\n');
-        for (i, (src, dst)) in pairs.iter().enumerate() {
-            out.push_str("    {");
-            out.push_str("\"src\": \"");
-            out.push_str(&escape_json(&format_node(t1.node(*src))));
-            out.push_str("\", \"dest\": \"");
-            out.push_str(&escape_json(&format_node(t2.node(*dst))));
-            out.push_str("\"}");
-            if i + 1 < pairs.len() {
-                out.push(',');
-            }
-            out.push('\n');
-        }
-        out.push_str("  ");
-    }
-    out.push_str("],\n");
+    let action_entries: Vec<ActionEntry> = actions.iter().map(|a| format_action(t1, t2, a)).collect();
 
-    // actions
-    out.push_str("  \"actions\": [");
-    if !actions.is_empty() {
-        out.push('\n');
-        for (i, action) in actions.iter().enumerate() {
-            out.push_str("    ");
-            out.push_str(&format_action_json(t1, t2, action));
-            if i + 1 < actions.len() {
-                out.push(',');
-            }
-            out.push('\n');
-        }
-        out.push_str("  ");
-    }
-    out.push_str("]\n");
+    let output = DiffOutput {
+        matches,
+        actions: action_entries,
+    };
 
-    out.push('}');
-    out
+    serde_json::to_string_pretty(&output).expect("serialization cannot fail for string data")
 }
 
-fn format_action_json(t1: &Tree, t2: &Tree, action: &Action) -> String {
+fn format_action(t1: &Tree, t2: &Tree, action: &Action) -> ActionEntry {
     match action {
         Action::InsertTree {
             node,
             parent,
             position,
-        } => format!(
-            "{{\"action\": \"insert-tree\", \"tree\": \"{}\", \"parent\": \"{}\", \"at\": {}}}",
-            escape_json(&format_node(t2.node(*node))),
-            escape_json(&format_node(t2.node(*parent))),
-            position
-        ),
+        } => ActionEntry {
+            action: "insert-tree",
+            tree: format_node(t2.node(*node)),
+            parent: Some(format_node(t2.node(*parent))),
+            at: Some(*position),
+            label: None,
+        },
         Action::InsertNode {
             node,
             parent,
             position,
-        } => format!(
-            "{{\"action\": \"insert-node\", \"tree\": \"{}\", \"parent\": \"{}\", \"at\": {}}}",
-            escape_json(&format_node(t2.node(*node))),
-            escape_json(&format_node(t2.node(*parent))),
-            position
-        ),
-        Action::DeleteTree { node } => format!(
-            "{{\"action\": \"delete-tree\", \"tree\": \"{}\"}}",
-            escape_json(&format_node(t1.node(*node)))
-        ),
-        Action::DeleteNode { node } => format!(
-            "{{\"action\": \"delete-node\", \"tree\": \"{}\"}}",
-            escape_json(&format_node(t1.node(*node)))
-        ),
-        Action::Update { node, new_label } => format!(
-            "{{\"action\": \"update-node\", \"tree\": \"{}\", \"label\": \"{}\"}}",
-            escape_json(&format_node(t1.node(*node))),
-            escape_json(new_label)
-        ),
+        } => ActionEntry {
+            action: "insert-node",
+            tree: format_node(t2.node(*node)),
+            parent: Some(format_node(t2.node(*parent))),
+            at: Some(*position),
+            label: None,
+        },
+        Action::DeleteTree { node } => ActionEntry {
+            action: "delete-tree",
+            tree: format_node(t1.node(*node)),
+            parent: None,
+            at: None,
+            label: None,
+        },
+        Action::DeleteNode { node } => ActionEntry {
+            action: "delete-node",
+            tree: format_node(t1.node(*node)),
+            parent: None,
+            at: None,
+            label: None,
+        },
+        Action::Update { node, new_label } => ActionEntry {
+            action: "update-node",
+            tree: format_node(t1.node(*node)),
+            parent: None,
+            at: None,
+            label: Some(new_label.clone()),
+        },
         Action::MoveTree {
             node,
             parent,
             position,
-        } => format!(
-            "{{\"action\": \"move-tree\", \"tree\": \"{}\", \"parent\": \"{}\", \"at\": {}}}",
-            escape_json(&format_node(t1.node(*node))),
-            escape_json(&format_node(t2.node(*parent))),
-            position
-        ),
+        } => ActionEntry {
+            action: "move-tree",
+            tree: format_node(t1.node(*node)),
+            parent: Some(format_node(t2.node(*parent))),
+            at: Some(*position),
+            label: None,
+        },
     }
-}
-
-fn escape_json(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{0008}' => out.push_str("\\b"),
-            '\u{000C}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -158,17 +154,24 @@ mod tests {
     #[test]
     fn json_escapes_quotes_and_backslashes() {
         let t = one_node("Leaf", r#"he said "ok\""#);
-        let s = format_node(t.node(t.root()));
-        let json = format!("\"{}\"", escape_json(&s));
-        // Quotes inside must be backslash-escaped.
-        assert!(json.contains(r#"he said \"ok\\\""#));
+        let m = Mapping::new();
+        let actions: Vec<Action> = vec![];
+        let json = to_json(&t, &t, &m, &actions);
+        // serde_json handles escaping; verify the output is valid JSON.
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert!(parsed.is_object());
     }
 
     #[test]
     fn json_escapes_control_characters() {
-        let escaped = escape_json("a\nb\tc");
-        assert!(escaped.contains("\\n"));
-        assert!(escaped.contains("\\t"));
+        let t1 = one_node("Leaf", "a\nb\tc");
+        let t2 = one_node("Leaf", "a\nb\tc");
+        let mut m = Mapping::new();
+        m.link(t1.root(), t2.root());
+        let actions: Vec<Action> = vec![];
+        let json = to_json(&t1, &t2, &m, &actions);
+        assert!(json.contains("\\n"));
+        assert!(json.contains("\\t"));
     }
 
     #[test]
@@ -244,13 +247,11 @@ mod tests {
         let actions = vec![Action::DeleteTree { node: t1.root() }];
         let m = Mapping::new();
         let s = to_json(&t1, &t2, &m, &actions);
-        // Delete actions have only `action` and `tree`.
-        let action_line = s
-            .lines()
-            .find(|l| l.contains("delete-tree"))
-            .expect("delete line");
-        assert!(!action_line.contains("\"parent\""));
-        assert!(!action_line.contains("\"at\""));
+        // Delete actions have only `action` and `tree` — no parent or at.
+        let parsed: serde_json::Value = serde_json::from_str(&s).expect("valid JSON");
+        let action_obj = &parsed["actions"][0];
+        assert!(action_obj.get("parent").is_none());
+        assert!(action_obj.get("at").is_none());
     }
 
     #[test]
@@ -265,7 +266,8 @@ mod tests {
         let m = Mapping::new();
         let actions: Vec<Action> = vec![];
         let s = to_json(&t1, &t2, &m, &actions);
-        assert!(s.contains("\"matches\": []"));
-        assert!(s.contains("\"actions\": []"));
+        let parsed: serde_json::Value = serde_json::from_str(&s).expect("valid JSON");
+        assert!(parsed["matches"].as_array().unwrap().is_empty());
+        assert!(parsed["actions"].as_array().unwrap().is_empty());
     }
 }

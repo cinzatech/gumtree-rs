@@ -90,14 +90,15 @@ pub fn generate_actions(t1: &Tree, t2: &Tree, mapping: &Mapping) -> Vec<Action> 
 
         if !mapping.has_dst(x) {
             // x is new.
-            let all_new = t2.descendants(x).iter().all(|d| !mapping.has_dst(*d));
+            let descs = t2.descendants(x);
+            let all_new = descs.iter().all(|d| !mapping.has_dst(*d));
             if all_new {
                 actions.push(Action::InsertTree {
                     node: x,
                     parent: y,
                     position: pos,
                 });
-                for d in t2.descendants(x) {
+                for d in descs {
                     covered_by_insert_tree.insert(d);
                 }
             } else {
@@ -147,10 +148,11 @@ pub fn generate_actions(t1: &Tree, t2: &Tree, mapping: &Mapping) -> Vec<Action> 
         if mapping.has_src(w) {
             continue;
         }
-        let all_unmapped = t1.descendants(w).iter().all(|d| !mapping.has_src(*d));
+        let descs = t1.descendants(w);
+        let all_unmapped = descs.iter().all(|d| !mapping.has_src(*d));
         if all_unmapped {
             actions.push(Action::DeleteTree { node: w });
-            for d in t1.descendants(w) {
+            for d in descs {
                 covered_by_delete_tree.insert(d);
             }
         } else {

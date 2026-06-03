@@ -25,6 +25,13 @@ pub fn match_bottom_up(
     min_dice: f64,
     max_size: usize,
 ) {
+    // Build a kind → [NodeId] index over T2 so candidate lookup is O(same-kind)
+    // instead of O(|T2|) per unmapped node.
+    let mut kind_index: HashMap<&str, Vec<NodeId>> = HashMap::new();
+    for n in t2.all_nodes() {
+        kind_index.entry(&n.kind).or_default().push(n.id);
+    }
+
     let order = t1.post_order(t1.root());
     for n1 in order {
         if mapping.has_src(n1) {
@@ -33,7 +40,7 @@ pub fn match_bottom_up(
         if !has_matched_descendant(t1, n1, mapping) {
             continue;
         }
-        if let Some(n2) = find_candidate(t1, n1, t2, mapping, min_dice) {
+        if let Some(n2) = find_candidate(t1, n1, t2, mapping, min_dice, &kind_index) {
             mapping.link(n1, n2);
             if t1.node(n1).size.max(t2.node(n2).size) < max_size {
                 recover_simple(t1, n1, t2, n2, mapping);
@@ -47,20 +54,22 @@ fn has_matched_descendant(t: &Tree, n: NodeId, mapping: &Mapping) -> bool {
 }
 
 /// Best unmapped node in T2 with the same kind, by dice similarity.
-fn find_candidate(
+fn find_candidate<'a>(
     t1: &Tree,
     n1: NodeId,
-    t2: &Tree,
+    t2: &'a Tree,
     mapping: &Mapping,
     min_dice: f64,
+    kind_index: &HashMap<&'a str, Vec<NodeId>>,
 ) -> Option<NodeId> {
     let kind = &t1.node(n1).kind;
+    let candidates = match kind_index.get(kind.as_str()) {
+        Some(c) => c,
+        None => return None,
+    };
     let mut best: Option<(NodeId, f64)> = None;
-    for n2 in 0..t2.node_count() {
+    for &n2 in candidates {
         if mapping.has_dst(n2) {
-            continue;
-        }
-        if t2.node(n2).kind != *kind {
             continue;
         }
         let d = dice_coefficient(t1, n1, t2, n2, mapping);
