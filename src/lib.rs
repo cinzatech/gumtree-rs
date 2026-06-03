@@ -8,6 +8,7 @@
 pub mod actions;
 pub mod format;
 pub mod language;
+pub mod languages;
 pub mod mapping;
 pub mod matcher;
 pub mod tree;

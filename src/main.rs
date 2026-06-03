@@ -1,22 +1,16 @@
 //! `gumtree-rs` command-line tool.
 //!
 //! Usage:
-//!     gumtree-rs textdiff <old> <new> [-f JSON|TEXT]
+//!     gumtree-rs textdiff <old> <new> [-f JSON|TEXT] [-l LANG]
 //!
-//! Mimics the upstream `gumtree textdiff` CLI for YAML files.
+//! The language is auto-detected from the file extension unless `-l` is given.
 
 use std::env;
 use std::fs;
+use std::path::Path;
 use std::process::ExitCode;
 
-use gumtree_rs::{diff_sources, format::to_json, language::LanguageProfile, DiffOptions};
-
-struct YamlProfile;
-impl LanguageProfile for YamlProfile {
-    fn language(&self) -> tree_sitter::Language {
-        tree_sitter_yaml::LANGUAGE.into()
-    }
-}
+use gumtree_rs::{diff_sources, format::to_json, languages, DiffOptions};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -36,11 +30,16 @@ fn main() -> ExitCode {
     let new_path = &args[3];
 
     let mut format = "TEXT".to_string();
+    let mut lang_override: Option<String> = None;
     let mut i = 4;
     while i < args.len() {
         match args[i].as_str() {
             "-f" if i + 1 < args.len() => {
                 format = args[i + 1].clone();
+                i += 2;
+            }
+            "-l" if i + 1 < args.len() => {
+                lang_override = Some(args[i + 1].clone());
                 i += 2;
             }
             other => {
@@ -50,6 +49,27 @@ fn main() -> ExitCode {
             }
         }
     }
+
+    // Determine the language extension to use.
+    let ext = lang_override.unwrap_or_else(|| {
+        Path::new(old_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string()
+    });
+
+    let profile = match languages::profile_for_ext(&ext) {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "unsupported file extension: .{}\nsupported: {}",
+                ext,
+                languages::supported_extensions().join(", ")
+            );
+            return ExitCode::from(2);
+        }
+    };
 
     let old_src = match fs::read(old_path) {
         Ok(s) => s,
@@ -66,7 +86,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let result = match diff_sources(&old_src, &new_src, &YamlProfile, &DiffOptions::default()) {
+    let result = match diff_sources(&old_src, &new_src, profile, &DiffOptions::default()) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("diff failed: {}", e);
@@ -92,5 +112,13 @@ fn main() -> ExitCode {
 }
 
 fn print_usage(progname: &str) {
-    eprintln!("usage: {} textdiff <old-file> <new-file> [-f JSON|TEXT]", progname);
+    eprintln!(
+        "usage: {} textdiff <old-file> <new-file> [-f JSON|TEXT] [-l EXT]",
+        progname
+    );
+    eprintln!("  -l EXT   override language (e.g. rs, py, js)");
+    eprintln!(
+        "  supported extensions: {}",
+        languages::supported_extensions().join(", ")
+    );
 }
