@@ -1,0 +1,17 @@
+[package]
+name = "gumtree-rs"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust implementation of the SimpleGumTree AST differencing algorithm"
+
+[dependencies]
+tree-sitter = "0.26"
+tree-sitter-yaml = "0.7"
+
+[[bin]]
+name = "gumtree-rs"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
