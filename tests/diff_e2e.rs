@@ -175,8 +175,7 @@ fn mixed_change_produces_each_action_kind() {
     ]);
 
     let r = diff_trees(t1, t2, &DiffOptions::default());
-    let kinds: std::collections::HashSet<&str> =
-        r.actions.iter().map(|a| a.action_str()).collect();
+    let kinds: std::collections::HashSet<&str> = r.actions.iter().map(|a| a.action_str()).collect();
     assert!(kinds.contains("update-node"), "{:?}", r.actions);
     assert!(
         kinds.contains("insert-tree") || kinds.contains("insert-node"),
@@ -218,21 +217,10 @@ fn matches_are_bijective() {
 
 #[test]
 fn json_output_round_trip_has_correct_structure() {
-    let (t1, _) = make(&[
-        ("root", "", -1, 0, 10),
-        ("leaf", "x", 0, 1, 2),
-    ]);
-    let (t2, _) = make(&[
-        ("root", "", -1, 0, 10),
-        ("leaf", "y", 0, 1, 2),
-    ]);
+    let (t1, _) = make(&[("root", "", -1, 0, 10), ("leaf", "x", 0, 1, 2)]);
+    let (t2, _) = make(&[("root", "", -1, 0, 10), ("leaf", "y", 0, 1, 2)]);
     let r = diff_trees(t1, t2, &DiffOptions::default());
-    let json = gumtree_rs::format::to_json(
-        &r.src_tree,
-        &r.dst_tree,
-        &r.mapping,
-        &r.actions,
-    );
+    let json = gumtree_rs::format::to_json(&r.src_tree, &r.dst_tree, &r.mapping, &r.actions);
 
     // Look for the expected top-level keys.
     assert!(json.contains("\"matches\""));

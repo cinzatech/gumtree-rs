@@ -46,10 +46,7 @@ pub fn match_trees(t1: &Tree, t2: &Tree, opts: MatchOptions) -> Mapping {
 
     let r1 = t1.root();
     let r2 = t2.root();
-    if !mapping.has_src(r1)
-        && !mapping.has_dst(r2)
-        && t1.node(r1).kind == t2.node(r2).kind
-    {
+    if !mapping.has_src(r1) && !mapping.has_dst(r2) && t1.node(r1).kind == t2.node(r2).kind {
         mapping.link(r1, r2);
         bottomup::recover_simple(t1, r1, t2, r2, &mut mapping);
     }

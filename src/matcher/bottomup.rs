@@ -63,10 +63,7 @@ fn find_candidate<'a>(
     kind_index: &HashMap<&'a str, Vec<NodeId>>,
 ) -> Option<NodeId> {
     let kind = &t1.node(n1).kind;
-    let candidates = match kind_index.get(kind.as_str()) {
-        Some(c) => c,
-        None => return None,
-    };
+    let candidates = kind_index.get(kind.as_str())?;
     let mut best: Option<(NodeId, f64)> = None;
     for &n2 in candidates {
         if mapping.has_dst(n2) {
@@ -209,7 +206,10 @@ mod tests {
         // Top-down won't map the `val` nodes (their labels differ → different hashes).
         assert!(!m.has_src(v1));
         // But it should anchor the stable subtree (height 3 = > min_height).
-        assert!(!m.is_empty(), "top-down should have anchored the stable subtree");
+        assert!(
+            !m.is_empty(),
+            "top-down should have anchored the stable subtree"
+        );
 
         match_bottom_up(&t1, &t2, &mut m, DEFAULT_MIN_DICE, DEFAULT_MAX_SIZE);
         // After bottom-up + simple recovery, the val nodes should be linked.

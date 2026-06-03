@@ -104,9 +104,7 @@ pub fn match_top_down(t1: &Tree, t2: &Tree, mapping: &mut Mapping, min_height: u
         .into_iter()
         .map(|(a, b)| (parent_dice(t1, t2, a, b, mapping), a, b))
         .collect();
-    scored.sort_by(|x, y| {
-        y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    scored.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal));
 
     for (_, a, b) in scored {
         if !mapping.has_src(a) && !mapping.has_dst(b) {
@@ -123,13 +121,7 @@ fn is_isomorphic(t1: &Tree, n1: NodeId, t2: &Tree, n2: NodeId) -> bool {
 }
 
 /// Links two isomorphic subtrees node-by-node in lockstep.
-fn map_isomorphic_subtree(
-    t1: &Tree,
-    n1: NodeId,
-    t2: &Tree,
-    n2: NodeId,
-    mapping: &mut Mapping,
-) {
+fn map_isomorphic_subtree(t1: &Tree, n1: NodeId, t2: &Tree, n2: NodeId, mapping: &mut Mapping) {
     mapping.link(n1, n2);
     let c1 = t1.node(n1).children.clone();
     let c2 = t2.node(n2).children.clone();
@@ -140,13 +132,7 @@ fn map_isomorphic_subtree(
     }
 }
 
-fn parent_dice(
-    t1: &Tree,
-    t2: &Tree,
-    n1: NodeId,
-    n2: NodeId,
-    mapping: &Mapping,
-) -> f64 {
+fn parent_dice(t1: &Tree, t2: &Tree, n1: NodeId, n2: NodeId, mapping: &Mapping) -> f64 {
     match (t1.node(n1).parent, t2.node(n2).parent) {
         (Some(p1), Some(p2)) => dice_coefficient(t1, p1, t2, p2, mapping),
         _ => 0.0,
@@ -158,13 +144,7 @@ fn parent_dice(
 /// Defined as `2 * |common| / (|desc(n1)| + |desc(n2)|)` where `common` is the
 /// number of descendants of `n1` whose mapped image lies within the descendants
 /// of `n2`.
-pub fn dice_coefficient(
-    t1: &Tree,
-    n1: NodeId,
-    t2: &Tree,
-    n2: NodeId,
-    mapping: &Mapping,
-) -> f64 {
+pub fn dice_coefficient(t1: &Tree, n1: NodeId, t2: &Tree, n2: NodeId, mapping: &Mapping) -> f64 {
     let desc1 = t1.descendants(n1);
     let desc2: HashSet<NodeId> = t2.descendants(n2).into_iter().collect();
     if desc1.is_empty() && desc2.is_empty() {

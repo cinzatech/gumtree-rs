@@ -15,7 +15,7 @@ use gumtree_rs::{diff_sources, format::to_json, languages, DiffOptions};
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
     if args.len() < 4 {
-        print_usage(&args.first().map(String::as_str).unwrap_or("gumtree-rs"));
+        print_usage(args.first().map(String::as_str).unwrap_or("gumtree-rs"));
         return ExitCode::from(2);
     }
 

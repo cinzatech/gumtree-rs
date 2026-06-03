@@ -29,7 +29,10 @@ simple_profile!(CProfile, tree_sitter_c::LANGUAGE);
 simple_profile!(CppProfile, tree_sitter_cpp::LANGUAGE);
 simple_profile!(CSharpProfile, tree_sitter_c_sharp::LANGUAGE);
 simple_profile!(CssProfile, tree_sitter_css::LANGUAGE);
-simple_profile!(EmbeddedTemplateProfile, tree_sitter_embedded_template::LANGUAGE);
+simple_profile!(
+    EmbeddedTemplateProfile,
+    tree_sitter_embedded_template::LANGUAGE
+);
 simple_profile!(GoProfile, tree_sitter_go::LANGUAGE);
 simple_profile!(HaskellProfile, tree_sitter_haskell::LANGUAGE);
 simple_profile!(HtmlProfile, tree_sitter_html::LANGUAGE);
@@ -39,21 +42,30 @@ simple_profile!(JsDocProfile, tree_sitter_jsdoc::LANGUAGE);
 simple_profile!(JsonProfile, tree_sitter_json::LANGUAGE);
 simple_profile!(JuliaProfile, tree_sitter_julia::LANGUAGE);
 simple_profile!(OcamlProfile, tree_sitter_ocaml::LANGUAGE_OCAML);
-simple_profile!(OcamlInterfaceProfile, tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE);
+simple_profile!(
+    OcamlInterfaceProfile,
+    tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE
+);
 simple_profile!(PhpProfile, tree_sitter_php::LANGUAGE_PHP);
 simple_profile!(PythonProfile, tree_sitter_python::LANGUAGE);
 simple_profile!(RegexProfile, tree_sitter_regex::LANGUAGE);
 simple_profile!(RubyProfile, tree_sitter_ruby::LANGUAGE);
 simple_profile!(RustProfile, tree_sitter_rust::LANGUAGE);
 simple_profile!(ScalaProfile, tree_sitter_scala::LANGUAGE);
-simple_profile!(TypeScriptProfile, tree_sitter_typescript::LANGUAGE_TYPESCRIPT);
+simple_profile!(
+    TypeScriptProfile,
+    tree_sitter_typescript::LANGUAGE_TYPESCRIPT
+);
 simple_profile!(TsxProfile, tree_sitter_typescript::LANGUAGE_TSX);
 simple_profile!(VerilogProfile, tree_sitter_verilog::LANGUAGE);
 simple_profile!(YamlProfile, tree_sitter_yaml::LANGUAGE);
 
 // --- Community grammars ---
 simple_profile!(CmakeProfile, tree_sitter_cmake::LANGUAGE);
-simple_profile!(CommonLispProfile, tree_sitter_commonlisp::LANGUAGE_COMMONLISP);
+simple_profile!(
+    CommonLispProfile,
+    tree_sitter_commonlisp::LANGUAGE_COMMONLISP
+);
 simple_profile!(DartProfile, tree_sitter_dart::LANGUAGE);
 simple_profile!(DockerfileProfile, tree_sitter_containerfile::LANGUAGE);
 simple_profile!(ElixirProfile, tree_sitter_elixir::LANGUAGE);
@@ -230,6 +242,9 @@ mod tests {
     fn ambiguous_extensions_are_not_in_default_map() {
         // These were intentionally removed — see NOTE above.
         assert!(profile_for_ext("conf").is_none(), ".conf is ambiguous");
-        assert!(profile_for_ext("m").is_none(), ".m is ambiguous (MATLAB vs Objective-C)");
+        assert!(
+            profile_for_ext("m").is_none(),
+            ".m is ambiguous (MATLAB vs Objective-C)"
+        );
     }
 }

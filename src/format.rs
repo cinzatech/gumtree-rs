@@ -59,7 +59,8 @@ pub fn to_json(t1: &Tree, t2: &Tree, mapping: &Mapping, actions: &[Action]) -> S
         })
         .collect();
 
-    let action_entries: Vec<ActionEntry> = actions.iter().map(|a| format_action(t1, t2, a)).collect();
+    let action_entries: Vec<ActionEntry> =
+        actions.iter().map(|a| format_action(t1, t2, a)).collect();
 
     let output = DiffOutput {
         matches,
