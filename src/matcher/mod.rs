@@ -39,16 +39,16 @@ impl Default for MatchOptions {
 /// regions), and the two roots agree in kind, this function anchors them and
 /// performs one pass of simple recovery so that downstream consumers still
 /// get a meaningful action set.
-pub fn match_trees(t1: &Tree, t2: &Tree, opts: MatchOptions) -> Mapping {
+pub fn match_trees(source_tree: &Tree, destination_tree: &Tree, options: MatchOptions) -> Mapping {
     let mut mapping = Mapping::new();
-    topdown::match_top_down(t1, t2, &mut mapping, opts.min_height);
-    bottomup::match_bottom_up(t1, t2, &mut mapping, opts.min_dice, opts.max_size);
+    topdown::match_top_down(source_tree, destination_tree, &mut mapping, options.min_height);
+    bottomup::match_bottom_up(source_tree, destination_tree, &mut mapping, options.min_dice, options.max_size);
 
-    let r1 = t1.root();
-    let r2 = t2.root();
-    if !mapping.has_src(r1) && !mapping.has_dst(r2) && t1.node(r1).kind == t2.node(r2).kind {
-        mapping.link(r1, r2);
-        bottomup::recover_simple(t1, r1, t2, r2, &mut mapping);
+    let source_root = source_tree.root();
+    let destination_root = destination_tree.root();
+    if !mapping.has_src(source_root) && !mapping.has_dst(destination_root) && source_tree.node(source_root).kind == destination_tree.node(destination_root).kind {
+        mapping.link(source_root, destination_root);
+        bottomup::recover_simple(source_tree, source_root, destination_tree, destination_root, &mut mapping);
     }
     mapping
 }

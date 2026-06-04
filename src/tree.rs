@@ -73,9 +73,9 @@ impl Tree {
 
     fn pre_order_into(&self, start: NodeId, result: &mut Vec<NodeId>) {
         result.push(start);
-        for i in 0..self.nodes[start].children.len() {
-            let c = self.nodes[start].children[i];
-            self.pre_order_into(c, result);
+        for index in 0..self.nodes[start].children.len() {
+            let child_id = self.nodes[start].children[index];
+            self.pre_order_into(child_id, result);
         }
     }
 
@@ -87,9 +87,9 @@ impl Tree {
     }
 
     fn post_order_into(&self, start: NodeId, result: &mut Vec<NodeId>) {
-        for i in 0..self.nodes[start].children.len() {
-            let c = self.nodes[start].children[i];
-            self.post_order_into(c, result);
+        for index in 0..self.nodes[start].children.len() {
+            let child_id = self.nodes[start].children[index];
+            self.post_order_into(child_id, result);
         }
         result.push(start);
     }
@@ -101,8 +101,8 @@ impl Tree {
         queue.push_back(start);
         while let Some(id) = queue.pop_front() {
             result.push(id);
-            for c in &self.nodes[id].children {
-                queue.push_back(*c);
+            for child_id in &self.nodes[id].children {
+                queue.push_back(*child_id);
             }
         }
         result
@@ -111,19 +111,19 @@ impl Tree {
     /// All proper descendants of `start` (excluding `start` itself).
     pub fn descendants(&self, start: NodeId) -> Vec<NodeId> {
         let mut result = Vec::with_capacity(self.nodes[start].size.saturating_sub(1));
-        for i in 0..self.nodes[start].children.len() {
-            let c = self.nodes[start].children[i];
-            result.push(c);
-            self.descendants_into(c, &mut result);
+        for index in 0..self.nodes[start].children.len() {
+            let child_id = self.nodes[start].children[index];
+            result.push(child_id);
+            self.descendants_into(child_id, &mut result);
         }
         result
     }
 
     fn descendants_into(&self, start: NodeId, result: &mut Vec<NodeId>) {
-        for i in 0..self.nodes[start].children.len() {
-            let c = self.nodes[start].children[i];
-            result.push(c);
-            self.descendants_into(c, result);
+        for index in 0..self.nodes[start].children.len() {
+            let child_id = self.nodes[start].children[index];
+            result.push(child_id);
+            self.descendants_into(child_id, result);
         }
     }
 
@@ -131,7 +131,7 @@ impl Tree {
     /// or `None` if `child` is the root or has no parent.
     pub fn position_in_parent(&self, child: NodeId) -> Option<usize> {
         let parent = self.nodes[child].parent?;
-        self.nodes[parent].children.iter().position(|&c| c == child)
+        self.nodes[parent].children.iter().position(|&candidate| candidate == child)
     }
 
     fn recompute_metadata(&mut self) {
@@ -145,16 +145,16 @@ impl Tree {
                 self.nodes[id].height = 1;
                 self.nodes[id].size = 1;
             } else {
-                let mut max_h = 0;
+                let mut max_height = 0;
                 let mut total_size = 1usize;
-                for i in 0..num_children {
-                    let c = self.nodes[id].children[i];
-                    if self.nodes[c].height > max_h {
-                        max_h = self.nodes[c].height;
+                for index in 0..num_children {
+                    let child_id = self.nodes[id].children[index];
+                    if self.nodes[child_id].height > max_height {
+                        max_height = self.nodes[child_id].height;
                     }
-                    total_size += self.nodes[c].size;
+                    total_size += self.nodes[child_id].size;
                 }
-                self.nodes[id].height = max_h + 1;
+                self.nodes[id].height = max_height + 1;
                 self.nodes[id].size = total_size;
             }
 
@@ -162,9 +162,9 @@ impl Tree {
             let mut hasher = DefaultHasher::new();
             self.nodes[id].kind.hash(&mut hasher);
             self.nodes[id].label.hash(&mut hasher);
-            for i in 0..num_children {
-                let c = self.nodes[id].children[i];
-                self.nodes[c].hash.hash(&mut hasher);
+            for index in 0..num_children {
+                let child_id = self.nodes[id].children[index];
+                self.nodes[child_id].hash.hash(&mut hasher);
             }
             self.nodes[id].hash = hasher.finish();
         }
@@ -206,8 +206,8 @@ impl TreeBuilder {
             size: 0,
             hash: 0,
         };
-        if let Some(p) = parent {
-            self.nodes[p].children.push(id);
+        if let Some(parent_id) = parent {
+            self.nodes[parent_id].children.push(id);
         }
         self.nodes.push(node);
         id
@@ -216,12 +216,12 @@ impl TreeBuilder {
     /// Finalises the tree. `root` must be a valid id, normally the first node added.
     pub fn build(self, root: NodeId) -> Tree {
         assert!(root < self.nodes.len(), "root id out of bounds");
-        let mut t = Tree {
+        let mut tree = Tree {
             nodes: self.nodes,
             root,
         };
-        t.recompute_metadata();
-        t
+        tree.recompute_metadata();
+        tree
     }
 }
 
@@ -231,163 +231,163 @@ mod tests {
 
     /// Helper: build (a (b 1) (c 2)).
     fn sample_tree() -> Tree {
-        let mut b = TreeBuilder::new();
-        let a = b.add("a", "", None, 0, 10);
-        let _b1 = b.add("b", "", Some(a), 0, 5);
-        let _one = b.add("leaf", "1", Some(_b1), 1, 2);
-        let _c = b.add("c", "", Some(a), 5, 10);
-        let _two = b.add("leaf", "2", Some(_c), 6, 7);
-        b.build(a)
+        let mut builder = TreeBuilder::new();
+        let root_id = builder.add("a", "", None, 0, 10);
+        let branch_b = builder.add("b", "", Some(root_id), 0, 5);
+        let _leaf_one = builder.add("leaf", "1", Some(branch_b), 1, 2);
+        let branch_c = builder.add("c", "", Some(root_id), 5, 10);
+        let _leaf_two = builder.add("leaf", "2", Some(branch_c), 6, 7);
+        builder.build(root_id)
     }
 
     #[test]
     fn builder_links_parent_and_children() {
-        let t = sample_tree();
-        let root = t.root();
-        let root_children = &t.node(root).children;
+        let tree = sample_tree();
+        let root = tree.root();
+        let root_children = &tree.node(root).children;
         assert_eq!(root_children.len(), 2);
-        for c in root_children {
-            assert_eq!(t.node(*c).parent, Some(root));
+        for child_id in root_children {
+            assert_eq!(tree.node(*child_id).parent, Some(root));
         }
     }
 
     #[test]
     fn root_has_no_parent() {
-        let t = sample_tree();
-        assert_eq!(t.node(t.root()).parent, None);
+        let tree = sample_tree();
+        assert_eq!(tree.node(tree.root()).parent, None);
     }
 
     #[test]
     fn height_of_leaf_is_one() {
-        let mut b = TreeBuilder::new();
-        let r = b.add("x", "lbl", None, 0, 1);
-        let t = b.build(r);
-        assert_eq!(t.node(r).height, 1);
+        let mut builder = TreeBuilder::new();
+        let root_id = builder.add("x", "lbl", None, 0, 1);
+        let tree = builder.build(root_id);
+        assert_eq!(tree.node(root_id).height, 1);
     }
 
     #[test]
     fn height_of_internal_is_max_child_plus_one() {
-        let t = sample_tree();
+        let tree = sample_tree();
         // root has children of height 2 → root height is 3.
-        assert_eq!(t.node(t.root()).height, 3);
+        assert_eq!(tree.node(tree.root()).height, 3);
     }
 
     #[test]
     fn size_includes_node_itself_and_all_descendants() {
-        let t = sample_tree();
+        let tree = sample_tree();
         // Tree has 5 nodes total.
-        assert_eq!(t.node(t.root()).size, 5);
+        assert_eq!(tree.node(tree.root()).size, 5);
     }
 
     #[test]
     fn size_of_leaf_is_one() {
-        let mut b = TreeBuilder::new();
-        let r = b.add("x", "", None, 0, 1);
-        let t = b.build(r);
-        assert_eq!(t.node(r).size, 1);
+        let mut builder = TreeBuilder::new();
+        let root_id = builder.add("x", "", None, 0, 1);
+        let tree = builder.build(root_id);
+        assert_eq!(tree.node(root_id).size, 1);
     }
 
     #[test]
     fn hash_equal_for_structurally_identical_trees() {
-        let mut a = TreeBuilder::new();
-        let ar = a.add("r", "", None, 0, 0);
-        let _ac = a.add("c", "x", Some(ar), 0, 0);
-        let ta = a.build(ar);
+        let mut builder_a = TreeBuilder::new();
+        let root_a = builder_a.add("r", "", None, 0, 0);
+        let _child_a = builder_a.add("c", "x", Some(root_a), 0, 0);
+        let tree_a = builder_a.build(root_a);
 
-        let mut b = TreeBuilder::new();
-        let br = b.add("r", "", None, 0, 0);
-        let _bc = b.add("c", "x", Some(br), 0, 0);
-        let tb = b.build(br);
+        let mut builder_b = TreeBuilder::new();
+        let root_b = builder_b.add("r", "", None, 0, 0);
+        let _child_b = builder_b.add("c", "x", Some(root_b), 0, 0);
+        let tree_b = builder_b.build(root_b);
 
-        assert_eq!(ta.node(ta.root()).hash, tb.node(tb.root()).hash);
+        assert_eq!(tree_a.node(tree_a.root()).hash, tree_b.node(tree_b.root()).hash);
     }
 
     #[test]
     fn hash_differs_when_labels_differ() {
-        let mut a = TreeBuilder::new();
-        let ar = a.add("r", "", None, 0, 0);
-        let _ac = a.add("c", "old", Some(ar), 0, 0);
-        let ta = a.build(ar);
+        let mut builder_a = TreeBuilder::new();
+        let root_a = builder_a.add("r", "", None, 0, 0);
+        let _child_a = builder_a.add("c", "old", Some(root_a), 0, 0);
+        let tree_a = builder_a.build(root_a);
 
-        let mut b = TreeBuilder::new();
-        let br = b.add("r", "", None, 0, 0);
-        let _bc = b.add("c", "new", Some(br), 0, 0);
-        let tb = b.build(br);
+        let mut builder_b = TreeBuilder::new();
+        let root_b = builder_b.add("r", "", None, 0, 0);
+        let _child_b = builder_b.add("c", "new", Some(root_b), 0, 0);
+        let tree_b = builder_b.build(root_b);
 
-        assert_ne!(ta.node(ta.root()).hash, tb.node(tb.root()).hash);
+        assert_ne!(tree_a.node(tree_a.root()).hash, tree_b.node(tree_b.root()).hash);
     }
 
     #[test]
     fn hash_differs_when_child_order_differs() {
-        let mut a = TreeBuilder::new();
-        let ar = a.add("r", "", None, 0, 0);
-        let _a1 = a.add("c", "1", Some(ar), 0, 0);
-        let _a2 = a.add("c", "2", Some(ar), 0, 0);
-        let ta = a.build(ar);
+        let mut builder_a = TreeBuilder::new();
+        let root_a = builder_a.add("r", "", None, 0, 0);
+        let _first_a = builder_a.add("c", "1", Some(root_a), 0, 0);
+        let _second_a = builder_a.add("c", "2", Some(root_a), 0, 0);
+        let tree_a = builder_a.build(root_a);
 
-        let mut b = TreeBuilder::new();
-        let br = b.add("r", "", None, 0, 0);
-        let _b2 = b.add("c", "2", Some(br), 0, 0);
-        let _b1 = b.add("c", "1", Some(br), 0, 0);
-        let tb = b.build(br);
+        let mut builder_b = TreeBuilder::new();
+        let root_b = builder_b.add("r", "", None, 0, 0);
+        let _second_b = builder_b.add("c", "2", Some(root_b), 0, 0);
+        let _first_b = builder_b.add("c", "1", Some(root_b), 0, 0);
+        let tree_b = builder_b.build(root_b);
 
-        assert_ne!(ta.node(ta.root()).hash, tb.node(tb.root()).hash);
+        assert_ne!(tree_a.node(tree_a.root()).hash, tree_b.node(tree_b.root()).hash);
     }
 
     #[test]
     fn hash_differs_when_kinds_differ() {
-        let mut a = TreeBuilder::new();
-        let ar = a.add("r", "", None, 0, 0);
-        let ta = a.build(ar);
+        let mut builder_a = TreeBuilder::new();
+        let root_a = builder_a.add("r", "", None, 0, 0);
+        let tree_a = builder_a.build(root_a);
 
-        let mut b = TreeBuilder::new();
-        let br = b.add("R", "", None, 0, 0);
-        let tb = b.build(br);
+        let mut builder_b = TreeBuilder::new();
+        let root_b = builder_b.add("R", "", None, 0, 0);
+        let tree_b = builder_b.build(root_b);
 
-        assert_ne!(ta.node(ta.root()).hash, tb.node(tb.root()).hash);
+        assert_ne!(tree_a.node(tree_a.root()).hash, tree_b.node(tree_b.root()).hash);
     }
 
     #[test]
     fn pre_order_visits_root_first() {
-        let t = sample_tree();
-        let order = t.pre_order(t.root());
-        assert_eq!(order[0], t.root());
-        assert_eq!(order.len(), t.node_count());
+        let tree = sample_tree();
+        let order = tree.pre_order(tree.root());
+        assert_eq!(order[0], tree.root());
+        assert_eq!(order.len(), tree.node_count());
     }
 
     #[test]
     fn post_order_visits_root_last() {
-        let t = sample_tree();
-        let order = t.post_order(t.root());
-        assert_eq!(*order.last().unwrap(), t.root());
-        assert_eq!(order.len(), t.node_count());
+        let tree = sample_tree();
+        let order = tree.post_order(tree.root());
+        assert_eq!(*order.last().unwrap(), tree.root());
+        assert_eq!(order.len(), tree.node_count());
     }
 
     #[test]
     fn post_order_visits_children_before_parent() {
-        let t = sample_tree();
-        let order = t.post_order(t.root());
+        let tree = sample_tree();
+        let order = tree.post_order(tree.root());
         // For each non-leaf, ensure every child appears before it.
-        for (i, &id) in order.iter().enumerate() {
-            for c in &t.node(id).children {
-                let cpos = order.iter().position(|&x| x == *c).unwrap();
-                assert!(cpos < i, "child {} should come before parent {}", c, id);
+        for (position, &node_id) in order.iter().enumerate() {
+            for child_id in &tree.node(node_id).children {
+                let child_position = order.iter().position(|&candidate| candidate == *child_id).unwrap();
+                assert!(child_position < position, "child {} should come before parent {}", child_id, node_id);
             }
         }
     }
 
     #[test]
     fn bfs_groups_by_depth() {
-        let t = sample_tree();
-        let order = t.bfs_order(t.root());
+        let tree = sample_tree();
+        let order = tree.bfs_order(tree.root());
         // Depths along BFS must be monotonically non-decreasing.
         let mut prev_depth = 0usize;
-        for id in order {
+        for node_id in order {
             let mut depth = 0;
-            let mut cur = t.node(id).parent;
-            while let Some(p) = cur {
+            let mut current_parent = tree.node(node_id).parent;
+            while let Some(parent_id) = current_parent {
                 depth += 1;
-                cur = t.node(p).parent;
+                current_parent = tree.node(parent_id).parent;
             }
             assert!(depth >= prev_depth);
             prev_depth = depth;
@@ -396,39 +396,39 @@ mod tests {
 
     #[test]
     fn descendants_excludes_self() {
-        let t = sample_tree();
-        let d = t.descendants(t.root());
-        assert!(!d.contains(&t.root()));
+        let tree = sample_tree();
+        let descendant_ids = tree.descendants(tree.root());
+        assert!(!descendant_ids.contains(&tree.root()));
         // Root has 4 proper descendants (b, 1, c, 2).
-        assert_eq!(d.len(), 4);
+        assert_eq!(descendant_ids.len(), 4);
     }
 
     #[test]
     fn descendants_of_leaf_is_empty() {
-        let mut b = TreeBuilder::new();
-        let r = b.add("x", "", None, 0, 0);
-        let t = b.build(r);
-        assert!(t.descendants(r).is_empty());
+        let mut builder = TreeBuilder::new();
+        let root_id = builder.add("x", "", None, 0, 0);
+        let tree = builder.build(root_id);
+        assert!(tree.descendants(root_id).is_empty());
     }
 
     #[test]
     fn position_in_parent_returns_index() {
-        let t = sample_tree();
-        let root_children = t.node(t.root()).children.clone();
-        for (i, c) in root_children.iter().enumerate() {
-            assert_eq!(t.position_in_parent(*c), Some(i));
+        let tree = sample_tree();
+        let root_children = tree.node(tree.root()).children.clone();
+        for (index, child_id) in root_children.iter().enumerate() {
+            assert_eq!(tree.position_in_parent(*child_id), Some(index));
         }
     }
 
     #[test]
     fn position_in_parent_of_root_is_none() {
-        let t = sample_tree();
-        assert_eq!(t.position_in_parent(t.root()), None);
+        let tree = sample_tree();
+        assert_eq!(tree.position_in_parent(tree.root()), None);
     }
 
     #[test]
     fn all_nodes_yields_node_count_nodes() {
-        let t = sample_tree();
-        assert_eq!(t.all_nodes().count(), t.node_count());
+        let tree = sample_tree();
+        assert_eq!(tree.all_nodes().count(), tree.node_count());
     }
 }

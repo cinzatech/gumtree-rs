@@ -36,12 +36,12 @@ pub struct DiffOptions {
 }
 
 /// Diffs two already-built internal trees.
-pub fn diff_trees(src: Tree, dst: Tree, opts: &DiffOptions) -> DiffResult {
-    let mapping = match_trees(&src, &dst, opts.match_options);
-    let actions = generate_actions(&src, &dst, &mapping);
+pub fn diff_trees(source: Tree, destination: Tree, options: &DiffOptions) -> DiffResult {
+    let mapping = match_trees(&source, &destination, options.match_options);
+    let actions = generate_actions(&source, &destination, &mapping);
     DiffResult {
-        src_tree: src,
-        dst_tree: dst,
+        src_tree: source,
+        dst_tree: destination,
         mapping,
         actions,
     }
@@ -52,21 +52,21 @@ pub fn diff_sources(
     old_source: &[u8],
     new_source: &[u8],
     profile: &dyn LanguageProfile,
-    opts: &DiffOptions,
+    options: &DiffOptions,
 ) -> Result<DiffResult, String> {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&profile.language())
-        .map_err(|e| format!("set_language: {}", e))?;
+        .map_err(|error| format!("set_language: {}", error))?;
 
-    let old_ts = parser
+    let old_syntax_tree = parser
         .parse(old_source, None)
         .ok_or_else(|| "failed to parse old source".to_string())?;
-    let new_ts = parser
+    let new_syntax_tree = parser
         .parse(new_source, None)
         .ok_or_else(|| "failed to parse new source".to_string())?;
 
-    let src = ts_convert::convert(&old_ts, old_source, profile);
-    let dst = ts_convert::convert(&new_ts, new_source, profile);
-    Ok(diff_trees(src, dst, opts))
+    let source = ts_convert::convert(&old_syntax_tree, old_source, profile);
+    let destination = ts_convert::convert(&new_syntax_tree, new_source, profile);
+    Ok(diff_trees(source, destination, options))
 }
