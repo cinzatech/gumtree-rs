@@ -5,6 +5,7 @@
 //! hyperparameters.
 
 pub mod bottomup;
+pub mod line_diff;
 pub mod topdown;
 
 use crate::mapping::Mapping;

@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use gumtree_rs::{diff_sources, format::to_json, languages, DiffOptions};
+use gumtree_rs::{diff_lines, diff_sources, format::to_json, languages, DiffOptions};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -84,23 +84,13 @@ fn main() -> ExitCode {
     });
 
     // Try extension first, then fall back to filename (for Dockerfile, Makefile, etc.).
-    let profile = match languages::profile_for_ext(&ext) {
-        Some(matched_profile) => matched_profile,
-        None => {
-            let filename = Path::new(old_path)
-                .file_name()
-                .and_then(|name_os_str| name_os_str.to_str())
-                .unwrap_or("");
-            match languages::profile_for_filename(filename) {
-                Some(matched_profile) => matched_profile,
-                None => {
-                    eprintln!("unsupported language for extension: .{}", ext);
-                    eprintln!("use -l EXT to override (e.g. -l rs, -l py)");
-                    return ExitCode::from(2);
-                }
-            }
-        }
-    };
+    let profile = languages::profile_for_ext(&ext).or_else(|| {
+        let filename = Path::new(old_path)
+            .file_name()
+            .and_then(|name_os_str| name_os_str.to_str())
+            .unwrap_or("");
+        languages::profile_for_filename(filename)
+    });
 
     let old_src = match fs::read(old_path) {
         Ok(bytes) => bytes,
@@ -125,8 +115,12 @@ fn main() -> ExitCode {
         diff_options.parse_timeout_us = timeout_secs.saturating_mul(1_000_000);
     }
 
-    let result = match diff_sources(&old_src, &new_src, profile, &diff_options) {
-        Ok(diff_result) => diff_result,
+    let diff_result = match profile {
+        Some(lang_profile) => diff_sources(&old_src, &new_src, lang_profile, &diff_options),
+        None => diff_lines(&old_src, &new_src, &diff_options),
+    };
+    let result = match diff_result {
+        Ok(value) => value,
         Err(error) => {
             eprintln!("diff failed: {}", error);
             return ExitCode::from(1);

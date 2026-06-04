@@ -9,6 +9,7 @@ pub mod actions;
 pub mod format;
 pub mod language;
 pub mod languages;
+pub mod line_tree;
 pub mod mapping;
 pub mod matcher;
 pub mod tree;
@@ -16,7 +17,9 @@ pub mod ts_convert;
 
 use crate::actions::{generate_actions, Action};
 use crate::language::LanguageProfile;
+use crate::line_tree::build_line_tree;
 use crate::mapping::Mapping;
+use crate::matcher::line_diff::match_lines;
 use crate::matcher::{match_trees, MatchOptions};
 use crate::tree::Tree;
 
@@ -130,4 +133,43 @@ fn parse_with_timeout(
         None,
         Some(opts.reborrow()),
     )
+}
+
+/// Line-based diff for files with no recognized grammar.
+///
+/// Builds flat `file → line*` trees from both inputs and uses LCS-based
+/// matching. The result uses the same action vocabulary as the AST-level diff,
+/// so callers (including the JSON formatter) need no special handling.
+pub fn diff_lines(
+    old_source: &[u8],
+    new_source: &[u8],
+    options: &DiffOptions,
+) -> Result<DiffResult, String> {
+    if options.max_file_size > 0 {
+        if old_source.len() as u64 > options.max_file_size {
+            return Err(format!(
+                "old source exceeds max file size ({} bytes > {} bytes)",
+                old_source.len(),
+                options.max_file_size
+            ));
+        }
+        if new_source.len() as u64 > options.max_file_size {
+            return Err(format!(
+                "new source exceeds max file size ({} bytes > {} bytes)",
+                new_source.len(),
+                options.max_file_size
+            ));
+        }
+    }
+
+    let source_tree = build_line_tree(old_source);
+    let destination_tree = build_line_tree(new_source);
+    let mapping = match_lines(&source_tree, &destination_tree);
+    let actions = generate_actions(&source_tree, &destination_tree, &mapping);
+    Ok(DiffResult {
+        src_tree: source_tree,
+        dst_tree: destination_tree,
+        mapping,
+        actions,
+    })
 }

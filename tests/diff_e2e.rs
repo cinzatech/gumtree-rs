@@ -296,3 +296,198 @@ fn options_threshold_can_be_overridden() {
     // the strict result has at most as many mappings as the default.
     assert!(strict_result.mapping.len() <= default_result.mapping.len());
 }
+
+// ---------------------------------------------------------------------------
+// Line-based diff (language-agnostic fallback) end-to-end tests
+// ---------------------------------------------------------------------------
+
+mod line_diff {
+    use gumtree_rs::actions::Action;
+    use gumtree_rs::{diff_lines, DiffOptions};
+
+    #[test]
+    fn identical_files_produce_no_actions() {
+        let source = b"aaa\nbbb\nccc\n";
+        let result = diff_lines(source, source, &DiffOptions::default()).unwrap();
+        assert!(result.actions.is_empty(), "got {:?}", result.actions);
+    }
+
+    #[test]
+    fn added_lines_produce_insert_actions() {
+        let old = b"aaa\nccc\n";
+        let new = b"aaa\nbbb\nccc\n";
+        let result = diff_lines(old, new, &DiffOptions::default()).unwrap();
+
+        let inserts: Vec<_> = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::InsertTree { .. } | Action::InsertNode { .. }))
+            .collect();
+        assert!(
+            !inserts.is_empty(),
+            "expected inserts, got {:?}",
+            result.actions
+        );
+
+        // The inserted node in the destination tree should carry the new line's content.
+        let inserted_label = match &inserts[0] {
+            Action::InsertTree { node, .. } | Action::InsertNode { node, .. } => {
+                result.dst_tree.node(*node).label.clone()
+            }
+            _ => unreachable!(),
+        };
+        assert_eq!(inserted_label, "bbb");
+
+        // No deletes — the old lines are still present.
+        let deletes = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::DeleteTree { .. } | Action::DeleteNode { .. }))
+            .count();
+        assert_eq!(deletes, 0);
+    }
+
+    #[test]
+    fn removed_lines_produce_delete_actions() {
+        let old = b"aaa\nbbb\nccc\n";
+        let new = b"aaa\nccc\n";
+        let result = diff_lines(old, new, &DiffOptions::default()).unwrap();
+
+        let deletes: Vec<_> = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::DeleteTree { .. } | Action::DeleteNode { .. }))
+            .collect();
+        assert!(
+            !deletes.is_empty(),
+            "expected deletes, got {:?}",
+            result.actions
+        );
+
+        let deleted_label = match &deletes[0] {
+            Action::DeleteTree { node } | Action::DeleteNode { node } => {
+                result.src_tree.node(*node).label.clone()
+            }
+            _ => unreachable!(),
+        };
+        assert_eq!(deleted_label, "bbb");
+    }
+
+    #[test]
+    fn completely_different_files_delete_all_old_and_insert_all_new() {
+        let old = b"aaa\nbbb\n";
+        let new = b"xxx\nyyy\n";
+        let result = diff_lines(old, new, &DiffOptions::default()).unwrap();
+
+        let insert_count = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::InsertTree { .. } | Action::InsertNode { .. }))
+            .count();
+        let delete_count = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::DeleteTree { .. } | Action::DeleteNode { .. }))
+            .count();
+        assert_eq!(delete_count, 2);
+        assert_eq!(insert_count, 2);
+    }
+
+    #[test]
+    fn empty_files_produce_no_actions() {
+        let result = diff_lines(b"", b"", &DiffOptions::default()).unwrap();
+        assert!(result.actions.is_empty());
+    }
+
+    #[test]
+    fn empty_to_nonempty_inserts_all_lines() {
+        let result = diff_lines(b"", b"hello\nworld\n", &DiffOptions::default()).unwrap();
+        let insert_count = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::InsertTree { .. } | Action::InsertNode { .. }))
+            .count();
+        assert_eq!(insert_count, 2);
+    }
+
+    #[test]
+    fn nonempty_to_empty_deletes_all_lines() {
+        let result = diff_lines(b"hello\nworld\n", b"", &DiffOptions::default()).unwrap();
+        let delete_count = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::DeleteTree { .. } | Action::DeleteNode { .. }))
+            .count();
+        assert_eq!(delete_count, 2);
+    }
+
+    #[test]
+    fn mappings_are_bijective() {
+        let old = b"aaa\nbbb\nccc\nddd\n";
+        let new = b"aaa\nxxx\nccc\nyyy\n";
+        let result = diff_lines(old, new, &DiffOptions::default()).unwrap();
+
+        let mut sources = std::collections::HashSet::new();
+        let mut destinations = std::collections::HashSet::new();
+        for (source, destination) in result.mapping.pairs() {
+            assert!(sources.insert(source), "source {} mapped twice", source);
+            assert!(
+                destinations.insert(destination),
+                "destination {} mapped twice",
+                destination
+            );
+        }
+    }
+
+    #[test]
+    fn json_output_uses_standard_vocabulary() {
+        let old = b"aaa\nbbb\n";
+        let new = b"aaa\nccc\n";
+        let result = diff_lines(old, new, &DiffOptions::default()).unwrap();
+        let json = gumtree_rs::format::to_json(
+            &result.src_tree,
+            &result.dst_tree,
+            &result.mapping,
+            &result.actions,
+        );
+
+        assert!(json.contains("\"matches\""), "missing matches key");
+        assert!(json.contains("\"actions\""), "missing actions key");
+        // The standard action names should appear — not any line-diff-specific ones.
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let actions = parsed["actions"].as_array().unwrap();
+        for action in actions {
+            let action_name = action["action"].as_str().unwrap();
+            assert!(
+                [
+                    "insert-tree",
+                    "insert-node",
+                    "delete-tree",
+                    "delete-node",
+                    "update-node",
+                    "move-tree"
+                ]
+                .contains(&action_name),
+                "unexpected action type: {}",
+                action_name
+            );
+        }
+    }
+
+    #[test]
+    fn file_size_limit_is_enforced() {
+        let options = DiffOptions {
+            max_file_size: 5,
+            ..DiffOptions::default()
+        };
+        let result = diff_lines(b"this is too long", b"short", &options);
+        match result {
+            Err(message) => assert!(
+                message.contains("max file size"),
+                "unexpected error: {}",
+                message
+            ),
+            Ok(_) => panic!("expected an error for oversized input"),
+        }
+    }
+}
