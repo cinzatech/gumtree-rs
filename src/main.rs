@@ -18,6 +18,8 @@ fn main() -> ExitCode {
     let mut positional: Vec<&str> = Vec::new();
     let mut format = "TEXT".to_string();
     let mut lang_override: Option<String> = None;
+    let mut max_file_size: Option<u64> = None;
+    let mut parse_timeout: Option<u64> = None;
     let mut arg_index = 1;
     while arg_index < args.len() {
         match args[arg_index].as_str() {
@@ -31,6 +33,26 @@ fn main() -> ExitCode {
             }
             "-l" if arg_index + 1 < args.len() => {
                 lang_override = Some(args[arg_index + 1].clone());
+                arg_index += 2;
+            }
+            "--max-file-size" if arg_index + 1 < args.len() => {
+                max_file_size = Some(match args[arg_index + 1].parse::<u64>() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        eprintln!("invalid value for --max-file-size: {}", args[arg_index + 1]);
+                        return ExitCode::from(2);
+                    }
+                });
+                arg_index += 2;
+            }
+            "--parse-timeout" if arg_index + 1 < args.len() => {
+                parse_timeout = Some(match args[arg_index + 1].parse::<u64>() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        eprintln!("invalid value for --parse-timeout: {}", args[arg_index + 1]);
+                        return ExitCode::from(2);
+                    }
+                });
                 arg_index += 2;
             }
             unknown if unknown.starts_with('-') => {
@@ -95,7 +117,15 @@ fn main() -> ExitCode {
         }
     };
 
-    let result = match diff_sources(&old_src, &new_src, profile, &DiffOptions::default()) {
+    let mut diff_options = DiffOptions::default();
+    if let Some(size) = max_file_size {
+        diff_options.max_file_size = size;
+    }
+    if let Some(timeout_secs) = parse_timeout {
+        diff_options.parse_timeout_us = timeout_secs.saturating_mul(1_000_000);
+    }
+
+    let result = match diff_sources(&old_src, &new_src, profile, &diff_options) {
         Ok(diff_result) => diff_result,
         Err(error) => {
             eprintln!("diff failed: {}", error);
@@ -126,7 +156,11 @@ fn print_usage(progname: &str) {
         progname
     );
     eprintln!();
-    eprintln!("  -f FORMAT  output format: TEXT (default) or JSON");
-    eprintln!("  -l EXT     override language (e.g. rs, py, js)");
-    eprintln!("  -h         show this help");
+    eprintln!("  -f FORMAT          output format: TEXT (default) or JSON");
+    eprintln!("  -l EXT             override language (e.g. rs, py, js)");
+    eprintln!(
+        "  --max-file-size N  max input file size in bytes (default: 104857600, 0 = no limit)"
+    );
+    eprintln!("  --parse-timeout N  parser timeout in seconds (default: 60, 0 = no limit)");
+    eprintln!("  -h                 show this help");
 }

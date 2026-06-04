@@ -29,10 +29,26 @@ pub struct DiffResult {
     pub actions: Vec<Action>,
 }
 
-/// Options forwarded to the matcher.
-#[derive(Debug, Clone, Copy, Default)]
+/// Options forwarded to the matcher and parser.
+#[derive(Debug, Clone, Copy)]
 pub struct DiffOptions {
     pub match_options: MatchOptions,
+    /// Maximum file size in bytes. Files exceeding this are rejected before
+    /// parsing. Set to `0` to disable the limit.
+    pub max_file_size: u64,
+    /// Parser timeout in microseconds. Set to `0` to disable.
+    pub parse_timeout_us: u64,
+}
+
+/// Default: 100 MB file limit, 60-second parse timeout.
+impl Default for DiffOptions {
+    fn default() -> Self {
+        Self {
+            match_options: MatchOptions::default(),
+            max_file_size: 100 * 1024 * 1024,
+            parse_timeout_us: 60_000_000,
+        }
+    }
 }
 
 /// Diffs two already-built internal trees.
@@ -54,19 +70,64 @@ pub fn diff_sources(
     profile: &dyn LanguageProfile,
     options: &DiffOptions,
 ) -> Result<DiffResult, String> {
+    if options.max_file_size > 0 {
+        if old_source.len() as u64 > options.max_file_size {
+            return Err(format!(
+                "old source exceeds max file size ({} bytes > {} bytes)",
+                old_source.len(),
+                options.max_file_size
+            ));
+        }
+        if new_source.len() as u64 > options.max_file_size {
+            return Err(format!(
+                "new source exceeds max file size ({} bytes > {} bytes)",
+                new_source.len(),
+                options.max_file_size
+            ));
+        }
+    }
+
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&profile.language())
         .map_err(|error| format!("set_language: {}", error))?;
 
-    let old_syntax_tree = parser
-        .parse(old_source, None)
-        .ok_or_else(|| "failed to parse old source".to_string())?;
-    let new_syntax_tree = parser
-        .parse(new_source, None)
-        .ok_or_else(|| "failed to parse new source".to_string())?;
+    let old_syntax_tree = parse_with_timeout(&mut parser, old_source, options.parse_timeout_us)
+        .ok_or_else(|| "failed to parse old source (timeout or error)".to_string())?;
+    let new_syntax_tree = parse_with_timeout(&mut parser, new_source, options.parse_timeout_us)
+        .ok_or_else(|| "failed to parse new source (timeout or error)".to_string())?;
 
     let source = ts_convert::convert(&old_syntax_tree, old_source, profile);
     let destination = ts_convert::convert(&new_syntax_tree, new_source, profile);
     Ok(diff_trees(source, destination, options))
+}
+
+/// Parses `source` with an optional timeout. A `timeout_us` of `0` means no limit.
+fn parse_with_timeout(
+    parser: &mut tree_sitter::Parser,
+    source: &[u8],
+    timeout_us: u64,
+) -> Option<tree_sitter::Tree> {
+    use std::ops::ControlFlow;
+    use std::time::Instant;
+
+    if timeout_us == 0 {
+        return parser.parse(source, None);
+    }
+
+    let deadline = Instant::now() + std::time::Duration::from_micros(timeout_us);
+    let len = source.len();
+    let mut callback = |_: &tree_sitter::ParseState| {
+        if Instant::now() >= deadline {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
+    let mut opts = tree_sitter::ParseOptions::new().progress_callback(&mut callback);
+    parser.parse_with_options(
+        &mut |i, _| if i < len { &source[i..] } else { &[] },
+        None,
+        Some(opts.reborrow()),
+    )
 }

@@ -40,17 +40,37 @@ pub fn match_bottom_up(
         if !has_matched_descendant(source_tree, source_node, mapping) {
             continue;
         }
-        if let Some(destination_node) = find_candidate(source_tree, source_node, destination_tree, mapping, min_dice, &kind_index) {
+        if let Some(destination_node) = find_candidate(
+            source_tree,
+            source_node,
+            destination_tree,
+            mapping,
+            min_dice,
+            &kind_index,
+        ) {
             mapping.link(source_node, destination_node);
-            if source_tree.node(source_node).size.max(destination_tree.node(destination_node).size) < max_size {
-                recover_simple(source_tree, source_node, destination_tree, destination_node, mapping);
+            if source_tree
+                .node(source_node)
+                .size
+                .max(destination_tree.node(destination_node).size)
+                < max_size
+            {
+                recover_simple(
+                    source_tree,
+                    source_node,
+                    destination_tree,
+                    destination_node,
+                    mapping,
+                );
             }
         }
     }
 }
 
 fn has_matched_descendant(tree: &Tree, node_id: NodeId, mapping: &Mapping) -> bool {
-    tree.descendants(node_id).iter().any(|descendant| mapping.has_src(*descendant))
+    tree.descendants(node_id)
+        .iter()
+        .any(|descendant| mapping.has_src(*descendant))
 }
 
 /// Best unmapped node in T2 with the same kind, by dice similarity.
@@ -69,7 +89,13 @@ fn find_candidate<'a>(
         if mapping.has_dst(candidate) {
             continue;
         }
-        let dice = dice_coefficient(source_tree, source_node, destination_tree, candidate, mapping);
+        let dice = dice_coefficient(
+            source_tree,
+            source_node,
+            destination_tree,
+            candidate,
+            mapping,
+        );
         if dice < min_dice {
             continue;
         }
@@ -87,7 +113,13 @@ fn find_candidate<'a>(
 ///
 /// Exposed so that integrating code (e.g. [`crate::matcher::match_trees`])
 /// can invoke recovery as a fallback after both matching phases.
-pub fn recover_simple(source_tree: &Tree, source_node: NodeId, destination_tree: &Tree, destination_node: NodeId, mapping: &mut Mapping) {
+pub fn recover_simple(
+    source_tree: &Tree,
+    source_node: NodeId,
+    destination_tree: &Tree,
+    destination_node: NodeId,
+    mapping: &mut Mapping,
+) {
     let source_descendants = source_tree.descendants(source_node);
     let destination_descendants = destination_tree.descendants(destination_node);
 
@@ -187,7 +219,8 @@ mod tests {
 
         let mut destination_builder = TreeBuilder::new();
         let destination_root = destination_builder.add("root", "", None, 0, 0);
-        let destination_anchor = destination_builder.add("anchor", "", Some(destination_root), 0, 0);
+        let destination_anchor =
+            destination_builder.add("anchor", "", Some(destination_root), 0, 0);
         let destination_deep = destination_builder.add("deep", "", Some(destination_anchor), 0, 0);
         let _ = destination_builder.add("leaf", "stable", Some(destination_deep), 0, 0);
         let destination_item = destination_builder.add("item", "", Some(destination_root), 0, 0);
@@ -195,14 +228,25 @@ mod tests {
         let destination_value = destination_builder.add("val", "new", Some(destination_item), 0, 0);
         let destination_tree = destination_builder.build(destination_root);
 
-        (source_tree, destination_tree, source_value, destination_value)
+        (
+            source_tree,
+            destination_tree,
+            source_value,
+            destination_value,
+        )
     }
 
     #[test]
     fn bottom_up_maps_container_when_descendants_anchor() {
-        let (source_tree, destination_tree, source_value, destination_value) = pair_with_label_change();
+        let (source_tree, destination_tree, source_value, destination_value) =
+            pair_with_label_change();
         let mut mapping = Mapping::new();
-        match_top_down(&source_tree, &destination_tree, &mut mapping, DEFAULT_MIN_HEIGHT);
+        match_top_down(
+            &source_tree,
+            &destination_tree,
+            &mut mapping,
+            DEFAULT_MIN_HEIGHT,
+        );
         // Top-down won't map the `val` nodes (their labels differ → different hashes).
         assert!(!mapping.has_src(source_value));
         // But it should anchor the stable subtree (height 3 = > min_height).
@@ -211,7 +255,13 @@ mod tests {
             "top-down should have anchored the stable subtree"
         );
 
-        match_bottom_up(&source_tree, &destination_tree, &mut mapping, DEFAULT_MIN_DICE, DEFAULT_MAX_SIZE);
+        match_bottom_up(
+            &source_tree,
+            &destination_tree,
+            &mut mapping,
+            DEFAULT_MIN_DICE,
+            DEFAULT_MAX_SIZE,
+        );
         // After bottom-up + simple recovery, the val nodes should be linked.
         assert_eq!(mapping.get_dst(source_value), Some(destination_value));
     }
@@ -231,7 +281,13 @@ mod tests {
         let destination_tree = destination_builder.build(destination_root);
 
         let mut mapping = Mapping::new();
-        match_bottom_up(&source_tree, &destination_tree, &mut mapping, DEFAULT_MIN_DICE, DEFAULT_MAX_SIZE);
+        match_bottom_up(
+            &source_tree,
+            &destination_tree,
+            &mut mapping,
+            DEFAULT_MIN_DICE,
+            DEFAULT_MAX_SIZE,
+        );
         assert!(mapping.is_empty());
     }
 
@@ -253,7 +309,8 @@ mod tests {
 
         let mut destination_builder = TreeBuilder::new();
         let destination_root = destination_builder.add("root", "", None, 0, 0);
-        let destination_container = destination_builder.add("ctr", "", Some(destination_root), 0, 0);
+        let destination_container =
+            destination_builder.add("ctr", "", Some(destination_root), 0, 0);
         for _ in 0..3 {
             let anchor = destination_builder.add("anchor", "", Some(destination_container), 0, 0);
             let inner = destination_builder.add("inner", "", Some(anchor), 0, 0);
@@ -264,15 +321,40 @@ mod tests {
 
         // Strict threshold blocks the ctr match (dice ~= 0.9, not >= 0.99).
         let mut strict_mapping = Mapping::new();
-        match_top_down(&source_tree, &destination_tree, &mut strict_mapping, DEFAULT_MIN_HEIGHT);
-        match_bottom_up(&source_tree, &destination_tree, &mut strict_mapping, 0.99, DEFAULT_MAX_SIZE);
+        match_top_down(
+            &source_tree,
+            &destination_tree,
+            &mut strict_mapping,
+            DEFAULT_MIN_HEIGHT,
+        );
+        match_bottom_up(
+            &source_tree,
+            &destination_tree,
+            &mut strict_mapping,
+            0.99,
+            DEFAULT_MAX_SIZE,
+        );
         assert!(!strict_mapping.has_src(source_container));
 
         // Default threshold accepts the ctr match.
         let mut default_mapping = Mapping::new();
-        match_top_down(&source_tree, &destination_tree, &mut default_mapping, DEFAULT_MIN_HEIGHT);
-        match_bottom_up(&source_tree, &destination_tree, &mut default_mapping, DEFAULT_MIN_DICE, DEFAULT_MAX_SIZE);
-        assert_eq!(default_mapping.get_dst(source_container), Some(destination_container));
+        match_top_down(
+            &source_tree,
+            &destination_tree,
+            &mut default_mapping,
+            DEFAULT_MIN_HEIGHT,
+        );
+        match_bottom_up(
+            &source_tree,
+            &destination_tree,
+            &mut default_mapping,
+            DEFAULT_MIN_DICE,
+            DEFAULT_MAX_SIZE,
+        );
+        assert_eq!(
+            default_mapping.get_dst(source_container),
+            Some(destination_container)
+        );
     }
 
     #[test]
@@ -293,19 +375,39 @@ mod tests {
 
         let mut destination_builder = TreeBuilder::new();
         let destination_root = destination_builder.add("root", "", None, 0, 0);
-        let destination_anchor_top = destination_builder.add("anchor_top", "", Some(destination_root), 0, 0);
-        let destination_anchor_mid = destination_builder.add("anchor_mid", "", Some(destination_anchor_top), 0, 0);
+        let destination_anchor_top =
+            destination_builder.add("anchor_top", "", Some(destination_root), 0, 0);
+        let destination_anchor_mid =
+            destination_builder.add("anchor_mid", "", Some(destination_anchor_top), 0, 0);
         let _ = destination_builder.add("anchor_leaf", "x", Some(destination_anchor_mid), 0, 0);
-        let destination_container = destination_builder.add("ctr", "", Some(destination_root), 0, 0);
+        let destination_container =
+            destination_builder.add("ctr", "", Some(destination_root), 0, 0);
         let _ = destination_builder.add("anchor", "A", Some(destination_container), 0, 0);
         let _ = destination_builder.add("anchor", "A", Some(destination_container), 0, 0);
         let destination_tree = destination_builder.build(destination_root);
 
         let mut mapping = Mapping::new();
-        match_top_down(&source_tree, &destination_tree, &mut mapping, DEFAULT_MIN_HEIGHT);
-        match_bottom_up(&source_tree, &destination_tree, &mut mapping, DEFAULT_MIN_DICE, DEFAULT_MAX_SIZE);
+        match_top_down(
+            &source_tree,
+            &destination_tree,
+            &mut mapping,
+            DEFAULT_MIN_HEIGHT,
+        );
+        match_bottom_up(
+            &source_tree,
+            &destination_tree,
+            &mut mapping,
+            DEFAULT_MIN_DICE,
+            DEFAULT_MAX_SIZE,
+        );
         // Both "anchor: A" leaves in ctr1 should now be paired with two in ctr2.
-        assert!(mapping.has_src(first_anchor), "first anchor should be mapped");
-        assert!(mapping.has_src(second_anchor), "second anchor should be mapped");
+        assert!(
+            mapping.has_src(first_anchor),
+            "first anchor should be mapped"
+        );
+        assert!(
+            mapping.has_src(second_anchor),
+            "second anchor should be mapped"
+        );
     }
 }

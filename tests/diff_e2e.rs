@@ -14,7 +14,11 @@ fn make(spec: &[(&str, &str, i32, usize, usize)]) -> (Tree, Vec<NodeId>) {
     let mut builder = TreeBuilder::new();
     let mut ids = Vec::with_capacity(spec.len());
     for (kind, label, parent_index, start, end) in spec {
-        let parent = if *parent_index < 0 { None } else { Some(ids[*parent_index as usize]) };
+        let parent = if *parent_index < 0 {
+            None
+        } else {
+            Some(ids[*parent_index as usize])
+        };
         ids.push(builder.add(kind, label, parent, *start, *end));
     }
     (builder.build(ids[0]), ids)
@@ -80,7 +84,12 @@ fn pure_insertion_emits_insert_tree_not_per_node() {
     let inserts: Vec<&Action> = result
         .actions
         .iter()
-        .filter(|action| matches!(action, Action::InsertTree { .. } | Action::InsertNode { .. }))
+        .filter(|action| {
+            matches!(
+                action,
+                Action::InsertTree { .. } | Action::InsertNode { .. }
+            )
+        })
         .collect();
     assert_eq!(inserts.len(), 1);
     assert!(matches!(inserts[0], Action::InsertTree { .. }));
@@ -110,7 +119,12 @@ fn pure_deletion_emits_delete_tree_not_per_node() {
     let deletes: Vec<&Action> = result
         .actions
         .iter()
-        .filter(|action| matches!(action, Action::DeleteTree { .. } | Action::DeleteNode { .. }))
+        .filter(|action| {
+            matches!(
+                action,
+                Action::DeleteTree { .. } | Action::DeleteNode { .. }
+            )
+        })
         .collect();
     assert_eq!(deletes.len(), 1);
     assert!(matches!(deletes[0], Action::DeleteTree { .. }));
@@ -146,12 +160,22 @@ fn move_to_new_parent_emits_move_tree() {
     let inserts = result
         .actions
         .iter()
-        .filter(|action| matches!(action, Action::InsertTree { .. } | Action::InsertNode { .. }))
+        .filter(|action| {
+            matches!(
+                action,
+                Action::InsertTree { .. } | Action::InsertNode { .. }
+            )
+        })
         .count();
     let deletes = result
         .actions
         .iter()
-        .filter(|action| matches!(action, Action::DeleteTree { .. } | Action::DeleteNode { .. }))
+        .filter(|action| {
+            matches!(
+                action,
+                Action::DeleteTree { .. } | Action::DeleteNode { .. }
+            )
+        })
         .count();
     assert_eq!(inserts, 0);
     assert_eq!(deletes, 0);
@@ -175,7 +199,11 @@ fn mixed_change_produces_each_action_kind() {
     ]);
 
     let result = diff_trees(source_tree, destination_tree, &DiffOptions::default());
-    let kinds: std::collections::HashSet<&str> = result.actions.iter().map(|action| action.action_str()).collect();
+    let kinds: std::collections::HashSet<&str> = result
+        .actions
+        .iter()
+        .map(|action| action.action_str())
+        .collect();
     assert!(kinds.contains("update-node"), "{:?}", result.actions);
     assert!(
         kinds.contains("insert-tree") || kinds.contains("insert-node"),
@@ -211,7 +239,11 @@ fn matches_are_bijective() {
     let mut dsts = std::collections::HashSet::new();
     for (source, destination) in result.mapping.pairs() {
         assert!(srcs.insert(source), "src {} appeared twice", source);
-        assert!(dsts.insert(destination), "dst {} appeared twice", destination);
+        assert!(
+            dsts.insert(destination),
+            "dst {} appeared twice",
+            destination
+        );
     }
 }
 
@@ -220,7 +252,12 @@ fn json_output_round_trip_has_correct_structure() {
     let (source_tree, _) = make(&[("root", "", -1, 0, 10), ("leaf", "x", 0, 1, 2)]);
     let (destination_tree, _) = make(&[("root", "", -1, 0, 10), ("leaf", "y", 0, 1, 2)]);
     let result = diff_trees(source_tree, destination_tree, &DiffOptions::default());
-    let json = gumtree_rs::format::to_json(&result.src_tree, &result.dst_tree, &result.mapping, &result.actions);
+    let json = gumtree_rs::format::to_json(
+        &result.src_tree,
+        &result.dst_tree,
+        &result.mapping,
+        &result.actions,
+    );
 
     // Look for the expected top-level keys.
     assert!(json.contains("\"matches\""));
@@ -249,6 +286,7 @@ fn options_threshold_can_be_overridden() {
             min_height: 5,
             ..Default::default()
         },
+        ..Default::default()
     };
     let strict_result = diff_trees(source_tree.clone(), destination_tree.clone(), &strict);
     let default_result = diff_trees(source_tree, destination_tree, &DiffOptions::default());

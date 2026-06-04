@@ -41,14 +41,34 @@ impl Default for MatchOptions {
 /// get a meaningful action set.
 pub fn match_trees(source_tree: &Tree, destination_tree: &Tree, options: MatchOptions) -> Mapping {
     let mut mapping = Mapping::new();
-    topdown::match_top_down(source_tree, destination_tree, &mut mapping, options.min_height);
-    bottomup::match_bottom_up(source_tree, destination_tree, &mut mapping, options.min_dice, options.max_size);
+    topdown::match_top_down(
+        source_tree,
+        destination_tree,
+        &mut mapping,
+        options.min_height,
+    );
+    bottomup::match_bottom_up(
+        source_tree,
+        destination_tree,
+        &mut mapping,
+        options.min_dice,
+        options.max_size,
+    );
 
     let source_root = source_tree.root();
     let destination_root = destination_tree.root();
-    if !mapping.has_src(source_root) && !mapping.has_dst(destination_root) && source_tree.node(source_root).kind == destination_tree.node(destination_root).kind {
+    if !mapping.has_src(source_root)
+        && !mapping.has_dst(destination_root)
+        && source_tree.node(source_root).kind == destination_tree.node(destination_root).kind
+    {
         mapping.link(source_root, destination_root);
-        bottomup::recover_simple(source_tree, source_root, destination_tree, destination_root, &mut mapping);
+        bottomup::recover_simple(
+            source_tree,
+            source_root,
+            destination_tree,
+            destination_root,
+            &mut mapping,
+        );
     }
     mapping
 }

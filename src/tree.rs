@@ -67,31 +67,30 @@ impl Tree {
     /// Pre-order traversal starting at `start` (root before children).
     pub fn pre_order(&self, start: NodeId) -> Vec<NodeId> {
         let mut result = Vec::with_capacity(self.nodes[start].size);
-        self.pre_order_into(start, &mut result);
-        result
-    }
-
-    fn pre_order_into(&self, start: NodeId, result: &mut Vec<NodeId>) {
-        result.push(start);
-        for index in 0..self.nodes[start].children.len() {
-            let child_id = self.nodes[start].children[index];
-            self.pre_order_into(child_id, result);
+        let mut stack = vec![start];
+        while let Some(id) = stack.pop() {
+            result.push(id);
+            // Push children in reverse so the leftmost child is visited first.
+            for &child_id in self.nodes[id].children.iter().rev() {
+                stack.push(child_id);
+            }
         }
+        result
     }
 
     /// Post-order traversal starting at `start` (children before root).
     pub fn post_order(&self, start: NodeId) -> Vec<NodeId> {
+        // Two-pass: reverse pre-order (right-to-left), then reverse the result.
         let mut result = Vec::with_capacity(self.nodes[start].size);
-        self.post_order_into(start, &mut result);
-        result
-    }
-
-    fn post_order_into(&self, start: NodeId, result: &mut Vec<NodeId>) {
-        for index in 0..self.nodes[start].children.len() {
-            let child_id = self.nodes[start].children[index];
-            self.post_order_into(child_id, result);
+        let mut stack = vec![start];
+        while let Some(id) = stack.pop() {
+            result.push(id);
+            for &child_id in &self.nodes[id].children {
+                stack.push(child_id);
+            }
         }
-        result.push(start);
+        result.reverse();
+        result
     }
 
     /// Breadth-first traversal starting at `start`.
@@ -111,27 +110,24 @@ impl Tree {
     /// All proper descendants of `start` (excluding `start` itself).
     pub fn descendants(&self, start: NodeId) -> Vec<NodeId> {
         let mut result = Vec::with_capacity(self.nodes[start].size.saturating_sub(1));
-        for index in 0..self.nodes[start].children.len() {
-            let child_id = self.nodes[start].children[index];
-            result.push(child_id);
-            self.descendants_into(child_id, &mut result);
+        let mut stack: Vec<NodeId> = self.nodes[start].children.iter().copied().rev().collect();
+        while let Some(id) = stack.pop() {
+            result.push(id);
+            for &child_id in self.nodes[id].children.iter().rev() {
+                stack.push(child_id);
+            }
         }
         result
-    }
-
-    fn descendants_into(&self, start: NodeId, result: &mut Vec<NodeId>) {
-        for index in 0..self.nodes[start].children.len() {
-            let child_id = self.nodes[start].children[index];
-            result.push(child_id);
-            self.descendants_into(child_id, result);
-        }
     }
 
     /// Returns the position of `child` within its parent's children list,
     /// or `None` if `child` is the root or has no parent.
     pub fn position_in_parent(&self, child: NodeId) -> Option<usize> {
         let parent = self.nodes[child].parent?;
-        self.nodes[parent].children.iter().position(|&candidate| candidate == child)
+        self.nodes[parent]
+            .children
+            .iter()
+            .position(|&candidate| candidate == child)
     }
 
     fn recompute_metadata(&mut self) {
@@ -299,7 +295,10 @@ mod tests {
         let _child_b = builder_b.add("c", "x", Some(root_b), 0, 0);
         let tree_b = builder_b.build(root_b);
 
-        assert_eq!(tree_a.node(tree_a.root()).hash, tree_b.node(tree_b.root()).hash);
+        assert_eq!(
+            tree_a.node(tree_a.root()).hash,
+            tree_b.node(tree_b.root()).hash
+        );
     }
 
     #[test]
@@ -314,7 +313,10 @@ mod tests {
         let _child_b = builder_b.add("c", "new", Some(root_b), 0, 0);
         let tree_b = builder_b.build(root_b);
 
-        assert_ne!(tree_a.node(tree_a.root()).hash, tree_b.node(tree_b.root()).hash);
+        assert_ne!(
+            tree_a.node(tree_a.root()).hash,
+            tree_b.node(tree_b.root()).hash
+        );
     }
 
     #[test]
@@ -331,7 +333,10 @@ mod tests {
         let _first_b = builder_b.add("c", "1", Some(root_b), 0, 0);
         let tree_b = builder_b.build(root_b);
 
-        assert_ne!(tree_a.node(tree_a.root()).hash, tree_b.node(tree_b.root()).hash);
+        assert_ne!(
+            tree_a.node(tree_a.root()).hash,
+            tree_b.node(tree_b.root()).hash
+        );
     }
 
     #[test]
@@ -344,7 +349,10 @@ mod tests {
         let root_b = builder_b.add("R", "", None, 0, 0);
         let tree_b = builder_b.build(root_b);
 
-        assert_ne!(tree_a.node(tree_a.root()).hash, tree_b.node(tree_b.root()).hash);
+        assert_ne!(
+            tree_a.node(tree_a.root()).hash,
+            tree_b.node(tree_b.root()).hash
+        );
     }
 
     #[test]
@@ -370,8 +378,16 @@ mod tests {
         // For each non-leaf, ensure every child appears before it.
         for (position, &node_id) in order.iter().enumerate() {
             for child_id in &tree.node(node_id).children {
-                let child_position = order.iter().position(|&candidate| candidate == *child_id).unwrap();
-                assert!(child_position < position, "child {} should come before parent {}", child_id, node_id);
+                let child_position = order
+                    .iter()
+                    .position(|&candidate| candidate == *child_id)
+                    .unwrap();
+                assert!(
+                    child_position < position,
+                    "child {} should come before parent {}",
+                    child_id,
+                    node_id
+                );
             }
         }
     }

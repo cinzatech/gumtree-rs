@@ -59,7 +59,10 @@ impl Mapping {
 
     /// All `(src, dst)` pairs. Order is implementation-defined.
     pub fn pairs(&self) -> Vec<(NodeId, NodeId)> {
-        self.src_to_dst.iter().map(|(&source, &destination)| (source, destination)).collect()
+        self.src_to_dst
+            .iter()
+            .map(|(&source, &destination)| (source, destination))
+            .collect()
     }
 }
 

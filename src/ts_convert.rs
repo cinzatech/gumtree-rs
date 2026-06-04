@@ -11,11 +11,29 @@ use crate::tree::{NodeId, Tree, TreeBuilder};
 /// decide which nodes survive and which carry labels.
 pub fn convert(ts_tree: &TSTree, source: &[u8], profile: &dyn LanguageProfile) -> Tree {
     let mut builder = TreeBuilder::new();
-    let root_id = walk(&ts_tree.root_node(), source, &mut builder, None, profile);
+    let ts_root = ts_tree.root_node();
+
+    // Iterative DFS using an explicit work stack.
+    // Each entry is (ts_node, parent_id_in_builder).
+    let root_id = add_node(&ts_root, source, &mut builder, None, profile);
+    let mut stack: Vec<(TSNode, NodeId)> = collect_kept_children(&ts_root, profile)
+        .into_iter()
+        .rev()
+        .map(|child| (child, root_id))
+        .collect();
+
+    while let Some((ts_node, parent_id)) = stack.pop() {
+        let id = add_node(&ts_node, source, &mut builder, Some(parent_id), profile);
+        for child in collect_kept_children(&ts_node, profile).into_iter().rev() {
+            stack.push((child, id));
+        }
+    }
+
     builder.build(root_id)
 }
 
-fn walk(
+/// Creates a builder node for a single tree-sitter node.
+fn add_node(
     ts_node: &TSNode,
     source: &[u8],
     builder: &mut TreeBuilder,
@@ -23,40 +41,36 @@ fn walk(
     profile: &dyn LanguageProfile,
 ) -> NodeId {
     let kind = ts_node.kind();
-
-    // Determine whether this node will have any kept named children.
     let has_kept_child = {
         let mut cursor = ts_node.walk();
-        let mut found = false;
-        for child in ts_node.named_children(&mut cursor) {
-            if profile.keep(child.kind(), child.is_named()) {
-                found = true;
-                break;
-            }
-        }
-        found
+        let result = ts_node
+            .named_children(&mut cursor)
+            .any(|child| profile.keep(child.kind(), child.is_named()));
+        result
     };
-
     let label = if profile.label(kind, !has_kept_child) {
         ts_node.utf8_text(source).unwrap_or("").to_string()
     } else {
         String::new()
     };
-
-    let id = builder.add(
+    builder.add(
         kind,
         &label,
         parent,
         ts_node.start_byte(),
         ts_node.end_byte(),
-    );
+    )
+}
 
+/// Returns the kept named children of a tree-sitter node, in order.
+fn collect_kept_children<'a>(
+    ts_node: &TSNode<'a>,
+    profile: &dyn LanguageProfile,
+) -> Vec<TSNode<'a>> {
     let mut cursor = ts_node.walk();
-    for child in ts_node.named_children(&mut cursor) {
-        if profile.keep(child.kind(), child.is_named()) {
-            walk(&child, source, builder, Some(id), profile);
-        }
-    }
-
-    id
+    let children: Vec<TSNode<'a>> = ts_node
+        .named_children(&mut cursor)
+        .filter(|child| profile.keep(child.kind(), child.is_named()))
+        .collect();
+    children
 }

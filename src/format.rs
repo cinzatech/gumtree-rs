@@ -49,7 +49,12 @@ struct ActionEntry {
 
 /// Serialises the full diff result to a JSON string mirroring GumTree's `-f JSON`
 /// output: `{"matches": [...], "actions": [...]}`.
-pub fn to_json(source_tree: &Tree, destination_tree: &Tree, mapping: &Mapping, actions: &[Action]) -> String {
+pub fn to_json(
+    source_tree: &Tree,
+    destination_tree: &Tree,
+    mapping: &Mapping,
+    actions: &[Action],
+) -> String {
     let matches: Vec<MatchEntry> = mapping
         .pairs()
         .iter()
@@ -59,8 +64,10 @@ pub fn to_json(source_tree: &Tree, destination_tree: &Tree, mapping: &Mapping, a
         })
         .collect();
 
-    let action_entries: Vec<ActionEntry> =
-        actions.iter().map(|action| format_action(source_tree, destination_tree, action)).collect();
+    let action_entries: Vec<ActionEntry> = actions
+        .iter()
+        .map(|action| format_action(source_tree, destination_tree, action))
+        .collect();
 
     let output = DiffOutput {
         matches,
@@ -149,7 +156,10 @@ mod tests {
     #[test]
     fn format_node_with_label() {
         let tree = one_node("YamlValue", "hello");
-        assert_eq!(format_node(tree.node(tree.root())), "YamlValue: hello [3,14]");
+        assert_eq!(
+            format_node(tree.node(tree.root())),
+            "YamlValue: hello [3,14]"
+        );
     }
 
     #[test]
@@ -245,7 +255,9 @@ mod tests {
         let root_id = builder.add("R", "", None, 0, 0);
         let destination_tree = builder.build(root_id);
 
-        let actions = vec![Action::DeleteTree { node: source_tree.root() }];
+        let actions = vec![Action::DeleteTree {
+            node: source_tree.root(),
+        }];
         let mapping = Mapping::new();
         let json_output = to_json(&source_tree, &destination_tree, &mapping, &actions);
         // Delete actions have only `action` and `tree` — no parent or at.

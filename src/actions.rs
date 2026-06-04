@@ -67,7 +67,11 @@ impl Action {
 }
 
 /// Generates the edit script that transforms `t1` into `t2` according to `mapping`.
-pub fn generate_actions(source_tree: &Tree, destination_tree: &Tree, mapping: &Mapping) -> Vec<Action> {
+pub fn generate_actions(
+    source_tree: &Tree,
+    destination_tree: &Tree,
+    mapping: &Mapping,
+) -> Vec<Action> {
     let mut actions: Vec<Action> = Vec::new();
     let mut covered_by_insert_tree: HashSet<NodeId> = HashSet::new();
 
@@ -80,7 +84,10 @@ pub fn generate_actions(source_tree: &Tree, destination_tree: &Tree, mapping: &M
         if covered_by_insert_tree.contains(&destination_node) {
             continue;
         }
-        let parent = destination_tree.node(destination_node).parent.expect("non-root has a parent");
+        let parent = destination_tree
+            .node(destination_node)
+            .parent
+            .expect("non-root has a parent");
         let position = destination_tree
             .node(parent)
             .children
@@ -91,7 +98,9 @@ pub fn generate_actions(source_tree: &Tree, destination_tree: &Tree, mapping: &M
         if !mapping.has_dst(destination_node) {
             // destination_node is new.
             let descendants = destination_tree.descendants(destination_node);
-            let all_new = descendants.iter().all(|descendant| !mapping.has_dst(*descendant));
+            let all_new = descendants
+                .iter()
+                .all(|descendant| !mapping.has_dst(*descendant));
             if all_new {
                 actions.push(Action::InsertTree {
                     node: destination_node,
@@ -112,7 +121,8 @@ pub fn generate_actions(source_tree: &Tree, destination_tree: &Tree, mapping: &M
             let source_node = mapping.get_src(destination_node).expect("mapped");
 
             // Label change → update.
-            if source_tree.node(source_node).label != destination_tree.node(destination_node).label {
+            if source_tree.node(source_node).label != destination_tree.node(destination_node).label
+            {
                 actions.push(Action::Update {
                     node: source_node,
                     new_label: destination_tree.node(destination_node).label.clone(),
@@ -134,7 +144,14 @@ pub fn generate_actions(source_tree: &Tree, destination_tree: &Tree, mapping: &M
 
     // Phase 2: alignment — within mapped (w, x), order mapped children to match T2.
     for (source_node, destination_node) in mapping.pairs() {
-        align_children(source_tree, source_node, destination_tree, destination_node, mapping, &mut actions);
+        align_children(
+            source_tree,
+            source_node,
+            destination_tree,
+            destination_node,
+            mapping,
+            &mut actions,
+        );
     }
     actions = dedup_moves(actions);
 
@@ -149,7 +166,9 @@ pub fn generate_actions(source_tree: &Tree, destination_tree: &Tree, mapping: &M
             continue;
         }
         let descendants = source_tree.descendants(source_node);
-        let all_unmapped = descendants.iter().all(|descendant| !mapping.has_src(*descendant));
+        let all_unmapped = descendants
+            .iter()
+            .all(|descendant| !mapping.has_src(*descendant));
         if all_unmapped {
             actions.push(Action::DeleteTree { node: source_node });
             for descendant in descendants {
@@ -343,7 +362,12 @@ mod tests {
         // for its descendants.
         let inserts: Vec<&Action> = actions
             .iter()
-            .filter(|action| matches!(action, Action::InsertTree { .. } | Action::InsertNode { .. }))
+            .filter(|action| {
+                matches!(
+                    action,
+                    Action::InsertTree { .. } | Action::InsertNode { .. }
+                )
+            })
             .collect();
         assert_eq!(inserts.len(), 1);
         assert!(matches!(inserts[0], Action::InsertTree { .. }));
@@ -370,7 +394,12 @@ mod tests {
         let (_, actions) = diff(&source_tree, &destination_tree);
         let deletes: Vec<&Action> = actions
             .iter()
-            .filter(|action| matches!(action, Action::DeleteTree { .. } | Action::DeleteNode { .. }))
+            .filter(|action| {
+                matches!(
+                    action,
+                    Action::DeleteTree { .. } | Action::DeleteNode { .. }
+                )
+            })
             .collect();
         assert_eq!(deletes.len(), 1);
         assert!(matches!(deletes[0], Action::DeleteTree { .. }));
@@ -405,11 +434,21 @@ mod tests {
         // No inserts or deletes for the moved nodes.
         let inserts = actions
             .iter()
-            .filter(|action| matches!(action, Action::InsertTree { .. } | Action::InsertNode { .. }))
+            .filter(|action| {
+                matches!(
+                    action,
+                    Action::InsertTree { .. } | Action::InsertNode { .. }
+                )
+            })
             .count();
         let deletes = actions
             .iter()
-            .filter(|action| matches!(action, Action::DeleteTree { .. } | Action::DeleteNode { .. }))
+            .filter(|action| {
+                matches!(
+                    action,
+                    Action::DeleteTree { .. } | Action::DeleteNode { .. }
+                )
+            })
             .count();
         assert_eq!(inserts, 0);
         assert_eq!(deletes, 0);

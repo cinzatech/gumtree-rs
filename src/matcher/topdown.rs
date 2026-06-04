@@ -16,7 +16,12 @@ pub const DEFAULT_MIN_HEIGHT: usize = 2;
 ///
 /// Subtrees whose height is at most `min_height` are deferred to the
 /// bottom-up phase.
-pub fn match_top_down(source_tree: &Tree, destination_tree: &Tree, mapping: &mut Mapping, min_height: usize) {
+pub fn match_top_down(
+    source_tree: &Tree,
+    destination_tree: &Tree,
+    mapping: &mut Mapping,
+    min_height: usize,
+) {
     let mut source_queue = HeightPQ::new();
     let mut destination_queue = HeightPQ::new();
     source_queue.push(source_tree, source_tree.root());
@@ -74,7 +79,13 @@ pub fn match_top_down(source_tree: &Tree, destination_tree: &Tree, mapping: &mut
             for (source, destination) in &iso_pairs {
                 if source_count[source] == 1 && destination_count[destination] == 1 {
                     if !mapping.has_src(*source) && !mapping.has_dst(*destination) {
-                        map_isomorphic_subtree(source_tree, *source, destination_tree, *destination, mapping);
+                        map_isomorphic_subtree(
+                            source_tree,
+                            *source,
+                            destination_tree,
+                            *destination,
+                            mapping,
+                        );
                     }
                     matched_sources.insert(*source);
                     matched_destinations.insert(*destination);
@@ -102,9 +113,20 @@ pub fn match_top_down(source_tree: &Tree, destination_tree: &Tree, mapping: &mut
     // Resolve ambiguous candidates by parent-context dice, descending.
     let mut scored: Vec<(f64, NodeId, NodeId)> = ambiguous
         .into_iter()
-        .map(|(source, destination)| (parent_dice(source_tree, destination_tree, source, destination, mapping), source, destination))
+        .map(|(source, destination)| {
+            (
+                parent_dice(source_tree, destination_tree, source, destination, mapping),
+                source,
+                destination,
+            )
+        })
         .collect();
-    scored.sort_by(|left, right| right.0.partial_cmp(&left.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|left, right| {
+        right
+            .0
+            .partial_cmp(&left.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     for (_, source, destination) in scored {
         if !mapping.has_src(source) && !mapping.has_dst(destination) {
@@ -116,25 +138,56 @@ pub fn match_top_down(source_tree: &Tree, destination_tree: &Tree, mapping: &mut
 /// Two nodes are isomorphic if their structural hashes match (which already
 /// covers kind, label, and child structure). The kind check is a cheap guard
 /// against hash collisions.
-fn is_isomorphic(source_tree: &Tree, source_node: NodeId, destination_tree: &Tree, destination_node: NodeId) -> bool {
-    source_tree.node(source_node).hash == destination_tree.node(destination_node).hash && source_tree.node(source_node).kind == destination_tree.node(destination_node).kind
+fn is_isomorphic(
+    source_tree: &Tree,
+    source_node: NodeId,
+    destination_tree: &Tree,
+    destination_node: NodeId,
+) -> bool {
+    source_tree.node(source_node).hash == destination_tree.node(destination_node).hash
+        && source_tree.node(source_node).kind == destination_tree.node(destination_node).kind
 }
 
 /// Links two isomorphic subtrees node-by-node in lockstep.
-fn map_isomorphic_subtree(source_tree: &Tree, source_node: NodeId, destination_tree: &Tree, destination_node: NodeId, mapping: &mut Mapping) {
-    mapping.link(source_node, destination_node);
-    let source_children = source_tree.node(source_node).children.clone();
-    let destination_children = destination_tree.node(destination_node).children.clone();
-    if source_children.len() == destination_children.len() {
-        for (source_child, destination_child) in source_children.iter().zip(destination_children.iter()) {
-            map_isomorphic_subtree(source_tree, *source_child, destination_tree, *destination_child, mapping);
+fn map_isomorphic_subtree(
+    source_tree: &Tree,
+    source_node: NodeId,
+    destination_tree: &Tree,
+    destination_node: NodeId,
+    mapping: &mut Mapping,
+) {
+    let mut stack = vec![(source_node, destination_node)];
+    while let Some((src, dst)) = stack.pop() {
+        mapping.link(src, dst);
+        let src_children = &source_tree.node(src).children;
+        let dst_children = &destination_tree.node(dst).children;
+        if src_children.len() == dst_children.len() {
+            // Push in reverse so leftmost pair is processed first.
+            for (s, d) in src_children.iter().zip(dst_children.iter()).rev() {
+                stack.push((*s, *d));
+            }
         }
     }
 }
 
-fn parent_dice(source_tree: &Tree, destination_tree: &Tree, source_node: NodeId, destination_node: NodeId, mapping: &Mapping) -> f64 {
-    match (source_tree.node(source_node).parent, destination_tree.node(destination_node).parent) {
-        (Some(source_parent), Some(destination_parent)) => dice_coefficient(source_tree, source_parent, destination_tree, destination_parent, mapping),
+fn parent_dice(
+    source_tree: &Tree,
+    destination_tree: &Tree,
+    source_node: NodeId,
+    destination_node: NodeId,
+    mapping: &Mapping,
+) -> f64 {
+    match (
+        source_tree.node(source_node).parent,
+        destination_tree.node(destination_node).parent,
+    ) {
+        (Some(source_parent), Some(destination_parent)) => dice_coefficient(
+            source_tree,
+            source_parent,
+            destination_tree,
+            destination_parent,
+            mapping,
+        ),
         _ => 0.0,
     }
 }
@@ -144,9 +197,18 @@ fn parent_dice(source_tree: &Tree, destination_tree: &Tree, source_node: NodeId,
 /// Defined as `2 * |common| / (|desc(n1)| + |desc(n2)|)` where `common` is the
 /// number of descendants of `n1` whose mapped image lies within the descendants
 /// of `n2`.
-pub fn dice_coefficient(source_tree: &Tree, source_node: NodeId, destination_tree: &Tree, destination_node: NodeId, mapping: &Mapping) -> f64 {
+pub fn dice_coefficient(
+    source_tree: &Tree,
+    source_node: NodeId,
+    destination_tree: &Tree,
+    destination_node: NodeId,
+    mapping: &Mapping,
+) -> f64 {
     let source_descendants = source_tree.descendants(source_node);
-    let destination_descendants: HashSet<NodeId> = destination_tree.descendants(destination_node).into_iter().collect();
+    let destination_descendants: HashSet<NodeId> = destination_tree
+        .descendants(destination_node)
+        .into_iter()
+        .collect();
     if source_descendants.is_empty() && destination_descendants.is_empty() {
         return 0.0;
     }
@@ -219,10 +281,18 @@ mod tests {
         let source_tree = small_tree("x", "y");
         let destination_tree = small_tree("x", "y");
         let mut mapping = Mapping::new();
-        match_top_down(&source_tree, &destination_tree, &mut mapping, DEFAULT_MIN_HEIGHT);
+        match_top_down(
+            &source_tree,
+            &destination_tree,
+            &mut mapping,
+            DEFAULT_MIN_HEIGHT,
+        );
         // Top-down should map at least the root subtree (height 3).
         assert!(mapping.has_src(source_tree.root()));
-        assert_eq!(mapping.get_dst(source_tree.root()), Some(destination_tree.root()));
+        assert_eq!(
+            mapping.get_dst(source_tree.root()),
+            Some(destination_tree.root())
+        );
         // Since hashes match for the whole tree, every node should be mapped.
         assert_eq!(mapping.len(), source_tree.node_count());
     }
@@ -240,7 +310,12 @@ mod tests {
         let destination_tree = destination_builder.build(destination_root);
 
         let mut mapping = Mapping::new();
-        match_top_down(&source_tree, &destination_tree, &mut mapping, DEFAULT_MIN_HEIGHT);
+        match_top_down(
+            &source_tree,
+            &destination_tree,
+            &mut mapping,
+            DEFAULT_MIN_HEIGHT,
+        );
         assert!(mapping.is_empty());
     }
 
@@ -268,7 +343,12 @@ mod tests {
         let destination_tree = destination_builder.build(destination_root);
 
         let mut mapping = Mapping::new();
-        match_top_down(&source_tree, &destination_tree, &mut mapping, DEFAULT_MIN_HEIGHT);
+        match_top_down(
+            &source_tree,
+            &destination_tree,
+            &mut mapping,
+            DEFAULT_MIN_HEIGHT,
+        );
 
         // The shared `sub` subtree should be anchored.
         assert_eq!(mapping.get_dst(source_sub), Some(destination_sub));
@@ -330,12 +410,18 @@ mod tests {
         let mut destination_builder = TreeBuilder::new();
         let destination_root = destination_builder.add("root", "", None, 0, 0);
         let destination_subtree = destination_builder.add("S", "", Some(destination_root), 0, 0);
-        let destination_child = destination_builder.add("child", "", Some(destination_subtree), 0, 0);
+        let destination_child =
+            destination_builder.add("child", "", Some(destination_subtree), 0, 0);
         let _ = destination_builder.add("leaf", "v", Some(destination_child), 0, 0);
         let destination_tree = destination_builder.build(destination_root);
 
         let mut mapping = Mapping::new();
-        match_top_down(&source_tree, &destination_tree, &mut mapping, DEFAULT_MIN_HEIGHT);
+        match_top_down(
+            &source_tree,
+            &destination_tree,
+            &mut mapping,
+            DEFAULT_MIN_HEIGHT,
+        );
         assert_eq!(mapping.get_dst(source_subtree), Some(destination_subtree));
     }
 
@@ -344,7 +430,16 @@ mod tests {
         let source_tree = small_tree("x", "y");
         let destination_tree = small_tree("a", "b");
         let mapping = Mapping::new();
-        assert_eq!(dice_coefficient(&source_tree, source_tree.root(), &destination_tree, destination_tree.root(), &mapping), 0.0);
+        assert_eq!(
+            dice_coefficient(
+                &source_tree,
+                source_tree.root(),
+                &destination_tree,
+                destination_tree.root(),
+                &mapping
+            ),
+            0.0
+        );
     }
 
     #[test]
@@ -355,10 +450,19 @@ mod tests {
         // Manually pair every descendant.
         let source_descendants = source_tree.descendants(source_tree.root());
         let destination_descendants = destination_tree.descendants(destination_tree.root());
-        for (source, destination) in source_descendants.iter().zip(destination_descendants.iter()) {
+        for (source, destination) in source_descendants
+            .iter()
+            .zip(destination_descendants.iter())
+        {
             mapping.link(*source, *destination);
         }
-        let dice = dice_coefficient(&source_tree, source_tree.root(), &destination_tree, destination_tree.root(), &mapping);
+        let dice = dice_coefficient(
+            &source_tree,
+            source_tree.root(),
+            &destination_tree,
+            destination_tree.root(),
+            &mapping,
+        );
         assert!((dice - 1.0).abs() < 1e-9);
     }
 }
