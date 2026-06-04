@@ -1,9 +1,46 @@
 # gumtree-rs
 
 A Rust implementation of the **SimpleGumTree** AST differencing algorithm
-(Falleri & Martinez, ICSE 2024), built on top of [tree-sitter](https://tree-sitter.github.io)
-parsers. The CLI mimics the upstream Java tool's `gumtree textdiff -f JSON`
-output schema so existing tooling can consume it unchanged.
+(Falleri & Martinez, ICSE 2024), built on top of
+[tree-sitter](https://tree-sitter.github.io) parsers.
+
+## Installation
+
+Requires a working Rust toolchain (`rustup`, `cargo`).
+
+```bash
+make build
+sudo make install      # installs to /usr/local/bin
+```
+
+Override the prefix with `PREFIX=/opt/mydir make install`.
+Uninstall with `sudo make uninstall`.
+
+## Usage
+
+```bash
+gumtree-rs old.rs new.rs              # human-readable text output
+gumtree-rs old.rs new.rs -f JSON      # machine-readable JSON
+gumtree-rs old.py new.py -l py        # explicit language override
+```
+
+The language is auto-detected from the file extension. For extensionless
+files like `Dockerfile` and `Makefile`, detection falls back to the
+filename. Use `-l EXT` to override when auto-detection fails.
+
+### JSON output schema
+
+```json
+{
+  "matches": [
+    {"src": "Kind: label [start,end]", "dest": "Kind: label [start,end]"}
+  ],
+  "actions": [
+    {"action": "move-tree", "tree": "...", "parent": "...", "at": 2},
+    {"action": "update-node", "tree": "...", "label": "new value"}
+  ]
+}
+```
 
 ## Algorithm
 
@@ -24,34 +61,11 @@ Three stages, each implemented in its own module:
    `update-node`, `move-tree`, including an LIS-based alignment pass for
    sibling reorderings.
 
-The `format` module serialises everything to GumTree-compatible JSON.
-
-## Usage
+## Development
 
 ```bash
-cargo build --release
-./target/release/gumtree-rs textdiff old new -f JSON
-```
-
-The output schema matches the Java tool:
-
-```json
-{
-  "matches": [
-    {"src": "Kind: label [start,end]", "dest": "Kind: label [start,end]"}
-  ],
-  "actions": [
-    {"action": "move-tree", "tree": "...", "parent": "...", "at": 2},
-    {"action": "update-node", "tree": "...", "label": "new value"}
-  ]
-}
-```
-
-## Testing
-
-```bash
-cargo test                       # all tests
-cargo test --no-default-features # core lib only, no grammar required
+make check    # fmt + clippy + tests
+make test     # tests only
 ```
 
 Unit tests live alongside each module; behavioural end-to-end tests in

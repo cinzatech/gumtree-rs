@@ -1,7 +1,7 @@
 //! `gumtree-rs` command-line tool.
 //!
 //! Usage:
-//!     gumtree-rs textdiff <old> <new> [-f JSON|TEXT] [-l LANG]
+//!     gumtree-rs <old> <new> [-f JSON|TEXT] [-l EXT]
 //!
 //! The language is auto-detected from the file extension unless `-l` is given.
 
@@ -14,26 +14,17 @@ use gumtree_rs::{diff_sources, format::to_json, languages, DiffOptions};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 4 {
-        print_usage(args.first().map(String::as_str).unwrap_or("gumtree-rs"));
-        return ExitCode::from(2);
-    }
 
-    let command = &args[1];
-    if command != "textdiff" {
-        eprintln!("unknown command: {}", command);
-        print_usage(&args[0]);
-        return ExitCode::from(2);
-    }
-
-    let old_path = &args[2];
-    let new_path = &args[3];
-
+    let mut positional: Vec<&str> = Vec::new();
     let mut format = "TEXT".to_string();
     let mut lang_override: Option<String> = None;
-    let mut i = 4;
+    let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "-h" | "--help" => {
+                print_usage(args.first().map(String::as_str).unwrap_or("gumtree-rs"));
+                return ExitCode::SUCCESS;
+            }
             "-f" if i + 1 < args.len() => {
                 format = args[i + 1].clone();
                 i += 2;
@@ -42,13 +33,24 @@ fn main() -> ExitCode {
                 lang_override = Some(args[i + 1].clone());
                 i += 2;
             }
-            other => {
-                eprintln!("unexpected argument: {}", other);
+            s if s.starts_with('-') => {
+                eprintln!("unknown option: {}", s);
                 print_usage(&args[0]);
                 return ExitCode::from(2);
             }
+            _ => {
+                positional.push(&args[i]);
+                i += 1;
+            }
         }
     }
+
+    if positional.len() != 2 {
+        print_usage(args.first().map(String::as_str).unwrap_or("gumtree-rs"));
+        return ExitCode::from(2);
+    }
+    let old_path = positional[0];
+    let new_path = positional[1];
 
     // Determine the language extension to use.
     let ext = lang_override.unwrap_or_else(|| {
@@ -70,11 +72,8 @@ fn main() -> ExitCode {
             match languages::profile_for_filename(filename) {
                 Some(p) => p,
                 None => {
-                    eprintln!(
-                        "unsupported file extension: .{}\nsupported: {}",
-                        ext,
-                        languages::supported_extensions().join(", ")
-                    );
+                    eprintln!("unsupported language for extension: .{}", ext);
+                    eprintln!("use -l EXT to override (e.g. -l rs, -l py)");
                     return ExitCode::from(2);
                 }
             }
@@ -123,12 +122,11 @@ fn main() -> ExitCode {
 
 fn print_usage(progname: &str) {
     eprintln!(
-        "usage: {} textdiff <old-file> <new-file> [-f JSON|TEXT] [-l EXT]",
+        "usage: {} <old-file> <new-file> [-f JSON|TEXT] [-l EXT]",
         progname
     );
-    eprintln!("  -l EXT   override language (e.g. rs, py, js)");
-    eprintln!(
-        "  supported extensions: {}",
-        languages::supported_extensions().join(", ")
-    );
+    eprintln!();
+    eprintln!("  -f FORMAT  output format: TEXT (default) or JSON");
+    eprintln!("  -l EXT     override language (e.g. rs, py, js)");
+    eprintln!("  -h         show this help");
 }
