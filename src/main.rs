@@ -1,7 +1,7 @@
 //! `gumtree-rs` command-line tool.
 //!
 //! Usage:
-//!     gumtree-rs <old> <new> [-f JSON|TEXT] [-l EXT]
+//!     gumtree-rs <old> <new> [-f JSON|TEXT|SIDE] [-l EXT]
 //!
 //! The language is auto-detected from the file extension unless `-l` is given.
 
@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use gumtree_rs::{diff_lines, diff_sources, format::to_json, languages, DiffOptions};
+use gumtree_rs::{diff_lines, diff_sources, format::to_json, languages, side_by_side, DiffOptions};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -135,6 +135,16 @@ fn main() -> ExitCode {
             &result.actions,
         );
         println!("{}", json);
+    } else if format.eq_ignore_ascii_case("SIDE") {
+        let output = side_by_side::format_side_by_side(
+            &old_src,
+            &new_src,
+            &result.src_tree,
+            &result.dst_tree,
+            &result.mapping,
+            &result.actions,
+        );
+        print!("{}", output);
     } else {
         for action in &result.actions {
             println!("{:?}", action);
@@ -146,11 +156,11 @@ fn main() -> ExitCode {
 
 fn print_usage(progname: &str) {
     eprintln!(
-        "usage: {} <old-file> <new-file> [-f JSON|TEXT] [-l EXT]",
+        "usage: {} <old-file> <new-file> [-f JSON|TEXT|SIDE] [-l EXT]",
         progname
     );
     eprintln!();
-    eprintln!("  -f FORMAT          output format: TEXT (default) or JSON");
+    eprintln!("  -f FORMAT          output format: TEXT (default), JSON, or SIDE");
     eprintln!("  -l EXT             override language (e.g. rs, py, js)");
     eprintln!(
         "  --max-file-size N  max input file size in bytes (default: 104857600, 0 = no limit)"

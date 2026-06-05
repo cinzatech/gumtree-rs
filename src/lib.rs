@@ -12,6 +12,7 @@ pub mod languages;
 pub mod line_tree;
 pub mod mapping;
 pub mod matcher;
+pub mod side_by_side;
 pub mod tree;
 pub mod ts_convert;
 

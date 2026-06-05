@@ -490,4 +490,108 @@ mod line_diff {
             Ok(_) => panic!("expected an error for oversized input"),
         }
     }
+
+    #[test]
+    fn swapped_lines_produce_move_not_insert_delete() {
+        let old = b"Foo\nBar\nBaz\n";
+        let new = b"Foo\nBaz\nBar\n";
+        let result = diff_lines(old, new, &DiffOptions::default()).unwrap();
+
+        let moves: Vec<_> = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::MoveTree { .. }))
+            .collect();
+        assert!(
+            !moves.is_empty(),
+            "expected move-tree, got {:?}",
+            result.actions
+        );
+
+        // No inserts or deletes — both lines are still present, just reordered.
+        let inserts = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::InsertTree { .. } | Action::InsertNode { .. }))
+            .count();
+        let deletes = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::DeleteTree { .. } | Action::DeleteNode { .. }))
+            .count();
+        assert_eq!(inserts, 0, "unexpected inserts: {:?}", result.actions);
+        assert_eq!(deletes, 0, "unexpected deletes: {:?}", result.actions);
+    }
+
+    #[test]
+    fn similar_line_produces_update_not_insert_delete() {
+        let old = b"Foo\nBarbaz\nBaz\n";
+        let new = b"Foo\nBar baz\nBaz\n";
+        let result = diff_lines(old, new, &DiffOptions::default()).unwrap();
+
+        let updates: Vec<_> = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::Update { .. }))
+            .collect();
+        assert!(
+            !updates.is_empty(),
+            "expected update-node, got {:?}",
+            result.actions
+        );
+
+        match &updates[0] {
+            Action::Update { new_label, .. } => assert_eq!(new_label, "Bar baz"),
+            other => panic!("expected Update, got {:?}", other),
+        }
+
+        // No inserts or deletes for the modified line.
+        let inserts = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::InsertTree { .. } | Action::InsertNode { .. }))
+            .count();
+        let deletes = result
+            .actions
+            .iter()
+            .filter(|a| matches!(a, Action::DeleteTree { .. } | Action::DeleteNode { .. }))
+            .count();
+        assert_eq!(inserts, 0, "unexpected inserts: {:?}", result.actions);
+        assert_eq!(deletes, 0, "unexpected deletes: {:?}", result.actions);
+    }
+
+    #[test]
+    fn move_and_update_combined() {
+        // Line moves AND another line changes content.
+        let old = b"alpha\nbeta_value\ngamma\n";
+        let new = b"gamma\nbeta_Value\nalpha\n";
+        let result = diff_lines(old, new, &DiffOptions::default()).unwrap();
+
+        let action_kinds: std::collections::HashSet<&str> =
+            result.actions.iter().map(|a| a.action_str()).collect();
+
+        // "alpha" and "gamma" moved; "beta_value" → "beta_Value" is an update.
+        assert!(
+            action_kinds.contains("move-tree"),
+            "expected move-tree: {:?}",
+            result.actions
+        );
+        assert!(
+            action_kinds.contains("update-node"),
+            "expected update-node: {:?}",
+            result.actions
+        );
+
+        // No inserts or deletes — everything is accounted for by moves and updates.
+        assert!(
+            !action_kinds.contains("insert-tree") && !action_kinds.contains("insert-node"),
+            "unexpected inserts: {:?}",
+            result.actions
+        );
+        assert!(
+            !action_kinds.contains("delete-tree") && !action_kinds.contains("delete-node"),
+            "unexpected deletes: {:?}",
+            result.actions
+        );
+    }
 }
