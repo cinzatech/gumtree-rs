@@ -209,14 +209,108 @@ fn non_reordered_function_is_not_marked_as_moved() {
     );
 }
 
-/// Bug: cross-function leaf mapping causes the wrong source line to pair with
-/// a destination line. Shared tokens like `print`, `(`, `+`, `)` between
-/// unrelated functions create phantom votes that pull source lines from the
-/// wrong section. The fix is tree-constrained voting.
+/// The user's actual test case: FUNC_OLD + think appended, FUNC_NEW + think
+/// appended. The output should pair greet↔greet, add↔add, think↔think because
+/// the leaf-level identifiers map correctly (greet→greet, think→think).
 ///
-/// We verify the structural invariant: no source line number may appear more
-/// than once in the output, and lines within a matched section must stay
-/// within that section's boundaries.
+/// The bug: parent-level function_definition mappings can disagree with leaf
+/// mappings (greet's function_definition maps to think's function_definition),
+/// and the section-constrained approach used the WRONG level to constrain,
+/// garbling the output.
+#[test]
+fn extended_test_case_pairs_functions_by_leaf_identity() {
+    let old = "\
+def greet(name):
+    print(\"Hello, \" + name)
+
+def add(a, b):
+    return a + b
+
+def unused():
+    pass
+
+def think(about):
+    print(about)
+";
+    let new = "\
+def add(a, b):
+    return a + b
+
+def greet(person):
+    print(\"Hi, \" + person)
+
+def multiply(a, b):
+    return a * b
+
+def helper():
+    x = 1
+    return x
+
+def think(thought):
+    print(\"Thinking about \" + thought)
+";
+    let output = side_by_side_plain(old, new);
+    let rows = parse_rows(&output);
+
+    // No source line number may appear more than once.
+    let source_line_numbers: Vec<usize> = rows
+        .iter()
+        .filter_map(|(left_num, _, _, _)| *left_num)
+        .collect();
+    let unique_source: HashSet<usize> = source_line_numbers.iter().copied().collect();
+    assert_eq!(
+        source_line_numbers.len(),
+        unique_source.len(),
+        "Source line numbers must be unique. Duplicates found in: {:?}",
+        source_line_numbers,
+    );
+
+    // greet must pair with greet.
+    let greet_row = rows
+        .iter()
+        .find(|(_, _, _, right)| right.contains("def greet"))
+        .expect("should have a row with 'def greet' on the right");
+    assert!(
+        greet_row.1.contains("def greet"),
+        "right 'def greet' should pair with left 'def greet', got left={:?}",
+        greet_row.1,
+    );
+
+    // think must pair with think.
+    let think_row = rows
+        .iter()
+        .find(|(_, _, _, right)| right.contains("def think"))
+        .expect("should have a row with 'def think' on the right");
+    assert!(
+        think_row.1.contains("def think"),
+        "right 'def think' should pair with left 'def think', got left={:?}",
+        think_row.1,
+    );
+
+    // add must pair with add.
+    let add_row = rows
+        .iter()
+        .find(|(_, _, _, right)| right.contains("def add"))
+        .expect("should have a row with 'def add' on the right");
+    assert!(
+        add_row.1.contains("def add"),
+        "right 'def add' should pair with left 'def add', got left={:?}",
+        add_row.1,
+    );
+
+    // think's print(about) must pair with think's print(... thought).
+    let think_print_row = rows
+        .iter()
+        .find(|(_, _, _, right)| right.contains("Thinking about"))
+        .expect("should have a row for think's print");
+    assert!(
+        think_print_row.1.contains("print(about)"),
+        "think's print should pair with 'print(about)', got left={:?}",
+        think_print_row.1,
+    );
+}
+
+/// Structural invariants that must hold for any diff output.
 #[test]
 fn cross_function_leaf_mapping_does_not_garble_lines() {
     let old = "\
@@ -248,7 +342,7 @@ def process(entries):
     let output = side_by_side_plain(old, new);
     let rows = parse_rows(&output);
 
-    // Invariant 1: no source line number appears more than once.
+    // No source line number appears more than once.
     let source_line_numbers: Vec<usize> = rows
         .iter()
         .filter_map(|(left_num, _, _, _)| *left_num)
@@ -261,7 +355,7 @@ def process(entries):
         source_line_numbers,
     );
 
-    // Invariant 2: no destination line number appears more than once.
+    // No destination line number appears more than once.
     let destination_line_numbers: Vec<usize> = rows
         .iter()
         .filter_map(|(_, _, right_num, _)| *right_num)
@@ -272,19 +366,5 @@ def process(entries):
         unique_destination.len(),
         "Destination line numbers must be unique. Duplicates found in: {:?}",
         destination_line_numbers,
-    );
-
-    // Invariant 3: the `add` function (which the matcher reliably pairs
-    // correctly) must have its lines paired together, not with another
-    // function's lines.
-    let add_row = rows
-        .iter()
-        .find(|(_, _, _, right)| right.starts_with("def add"))
-        .expect("should have a row for 'def add' on the right");
-    let (_, left_text, _, _) = add_row;
-    assert!(
-        left_text.contains("def add"),
-        "The row with 'def add' on the right should pair with 'def add' on the left, \
-         got: {left_text:?}",
     );
 }
