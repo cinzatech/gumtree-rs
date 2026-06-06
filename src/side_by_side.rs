@@ -17,20 +17,20 @@ use crate::actions::Action;
 use crate::mapping::Mapping;
 use crate::tree::{NodeId, Tree};
 
-struct FileLine {
-    text: String,
+struct FileLine<'a> {
+    text: &'a str,
     start_byte: usize,
     end_byte: usize,
 }
 
-fn split_into_lines(bytes: &[u8]) -> Vec<FileLine> {
-    let text = String::from_utf8_lossy(bytes);
+fn split_into_lines<'a>(bytes: &'a [u8]) -> Vec<FileLine<'a>> {
+    let text = std::str::from_utf8(bytes).expect("Input must be valid UTF-8");
     let mut lines = Vec::new();
     let mut offset = 0;
     for line in text.split('\n') {
         let end = offset + line.len();
         lines.push(FileLine {
-            text: line.to_string(),
+            text: line,
             start_byte: offset,
             end_byte: end,
         });
@@ -48,93 +48,86 @@ fn line_index_at_byte(lines: &[FileLine], byte_offset: usize) -> Option<usize> {
         .position(|line| byte_offset >= line.start_byte && byte_offset <= line.end_byte)
 }
 
-/// Builds a bijective destination-line → source-line mapping.
-///
-/// Phase 1: vote using identifier nodes weighted by inverse label frequency
-/// in the destination file. Unique names (function names) dominate; common
-/// names (`print`, `a`) are downweighted.
-///
-/// Phase 2: fill gaps by proximity — if the lines above and below an unmatched
-/// destination line map to a contiguous source range, interpolate.
-///
-/// Phase 3: pair remaining unmatched blank lines positionally.
-fn build_line_mapping(
-    source_lines: &[FileLine],
-    destination_lines: &[FileLine],
+/// Phase 1: vote using identifier nodes weighted by inverse label frequency.
+fn phase1_vote<'a>(
+    source_lines: &[FileLine<'a>],
+    destination_lines: &[FileLine<'a>],
     source_tree: &Tree,
     destination_tree: &Tree,
     mapping: &Mapping,
-) -> HashMap<usize, usize> {
-    // Count how often each identifier label appears in the destination tree.
-    let mut destination_label_frequency: HashMap<String, usize> = HashMap::new();
-    for node in destination_tree.all_nodes() {
-        if node.children.is_empty() && node.kind == "identifier" {
-            *destination_label_frequency
-                .entry(node.label.clone())
-                .or_insert(0) += 1;
-        }
-    }
+) -> Vec<(usize, usize, f64)> {
+    let destination_label_frequency: HashMap<&str, usize> = destination_tree
+        .all_nodes()
+        .filter(|n| n.children.is_empty() && n.kind == "identifier")
+        .fold(HashMap::new(), |mut acc, n| {
+            *acc.entry(n.label.as_str()).or_insert(0) += 1;
+            acc
+        });
 
-    // Phase 1: vote using only identifiers whose label appears exactly once
-    // in the destination file. These are reliable anchors (function/class names).
     let mut weighted_votes: HashMap<usize, HashMap<usize, f64>> = HashMap::new();
 
     for destination_node in destination_tree.all_nodes() {
-        if !destination_node.children.is_empty() {
-            continue;
-        }
-        if destination_node.kind != "identifier" {
+        if !destination_node.children.is_empty() || destination_node.kind != "identifier" {
             continue;
         }
         let frequency = destination_label_frequency
-            .get(&destination_node.label)
+            .get(destination_node.label.as_str())
             .copied()
             .unwrap_or(1);
         if frequency != 1 {
             continue;
         }
-        let weight = 1.0;
 
-        if let Some(source_node_id) = mapping.get_src(destination_node.id) {
-            let source_node = source_tree.node(source_node_id);
-            if let (Some(destination_line), Some(source_line)) = (
-                line_index_at_byte(destination_lines, destination_node.start_byte),
-                line_index_at_byte(source_lines, source_node.start_byte),
-            ) {
-                *weighted_votes
-                    .entry(destination_line)
-                    .or_default()
-                    .entry(source_line)
-                    .or_insert(0.0) += weight;
-            }
-        }
+        let Some(source_node_id) = mapping.get_src(destination_node.id) else {
+            continue;
+        };
+        let source_node = source_tree.node(source_node_id);
+
+        let (Some(destination_line), Some(source_line)) = (
+            line_index_at_byte(destination_lines, destination_node.start_byte),
+            line_index_at_byte(source_lines, source_node.start_byte),
+        ) else {
+            continue;
+        };
+
+        *weighted_votes
+            .entry(destination_line)
+            .or_default()
+            .entry(source_line)
+            .or_insert(0.0) += 1.0;
     }
 
-    // Pick best source line per destination line.
     let mut candidates: Vec<(usize, usize, f64)> = weighted_votes
         .into_iter()
         .filter_map(|(destination_line, line_votes)| {
             line_votes
                 .into_iter()
-                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                .max_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(source_line, weight)| (destination_line, source_line, weight))
         })
         .collect();
-    candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
 
-    // Greedy bijective assignment.
+    candidates.sort_by(|a, b| b.2.total_cmp(&a.2));
+    candidates
+}
+
+/// Phase 2: fill gaps by proximity interpolation.
+fn phase2_interpolate(
+    candidates: Vec<(usize, usize, f64)>,
+    source_lines: &[FileLine],
+    destination_lines: &[FileLine],
+) -> (HashMap<usize, usize>, HashSet<usize>) {
     let mut result: HashMap<usize, usize> = HashMap::new();
     let mut used_source_lines: HashSet<usize> = HashSet::new();
-    for (destination_line, source_line, _) in &candidates {
-        if !used_source_lines.contains(source_line) {
-            result.insert(*destination_line, *source_line);
-            used_source_lines.insert(*source_line);
+
+    for (destination_line, source_line, _) in candidates {
+        if used_source_lines.contains(&source_line) {
+            continue;
         }
+        result.insert(destination_line, source_line);
+        used_source_lines.insert(source_line);
     }
 
-    // Phase 2: fill gaps by proximity interpolation.
-    // Extend from matched anchor lines into unmatched gaps. Only extend when
-    // source lines are contiguous (same section).
     let mut changed = true;
     while changed {
         changed = false;
@@ -152,63 +145,82 @@ fn build_line_mapping(
                 (Some((above_dst, above_src)), Some((_below_dst, below_src)))
                     if above_src < below_src =>
                 {
-                    // Contiguous source range — safe to interpolate.
                     let offset = destination_line - above_dst;
                     let candidate = above_src + offset;
-                    if candidate < below_src && candidate < source_lines.len() {
-                        Some(candidate)
-                    } else {
-                        None
-                    }
+                    (candidate < below_src && candidate < source_lines.len()).then_some(candidate)
                 }
                 (Some((above_dst, above_src)), _) => {
-                    // Different sections or no below — extend from above only,
-                    // limited to one line at a time.
                     let offset = destination_line - above_dst;
                     let candidate = above_src + offset;
-                    if candidate < source_lines.len() && offset <= 1 {
-                        Some(candidate)
-                    } else {
-                        None
-                    }
+                    (candidate < source_lines.len() && offset <= 1).then_some(candidate)
                 }
                 (None, Some((below_dst, below_src))) => {
                     let offset = below_dst - destination_line;
-                    if below_src >= offset && offset <= 1 {
-                        Some(below_src - offset)
-                    } else {
-                        None
-                    }
+                    (below_src >= offset && offset <= 1).then_some(below_src - offset)
                 }
                 _ => None,
             };
 
-            if let Some(source_line) = inferred_source {
-                if !used_source_lines.contains(&source_line) {
-                    result.insert(destination_line, source_line);
-                    used_source_lines.insert(source_line);
-                    changed = true;
-                }
+            let Some(source_line) = inferred_source else {
+                continue;
+            };
+            if used_source_lines.contains(&source_line) {
+                continue;
             }
+
+            result.insert(destination_line, source_line);
+            used_source_lines.insert(source_line);
+            changed = true;
         }
     }
+    (result, used_source_lines)
+}
 
-    // Phase 3: pair remaining blank lines positionally.
-    let mut unmatched_source_blanks: Vec<usize> = (0..source_lines.len())
+/// Phase 3: pair remaining blank lines positionally.
+fn phase3_blanks(
+    mut result: HashMap<usize, usize>,
+    mut used_source_lines: HashSet<usize>,
+    source_lines: &[FileLine],
+    destination_lines: &[FileLine],
+) -> HashMap<usize, usize> {
+    let mut unmatched_source_blanks = (0..source_lines.len())
         .filter(|i| !used_source_lines.contains(i) && source_lines[*i].text.trim().is_empty())
-        .collect();
+        .collect::<Vec<_>>()
+        .into_iter();
+
     let unmatched_destination_blanks: Vec<usize> = (0..destination_lines.len())
         .filter(|i| !result.contains_key(i) && destination_lines[*i].text.trim().is_empty())
         .collect();
+
     for destination_blank in unmatched_destination_blanks {
-        if let Some(source_blank) = unmatched_source_blanks.first().copied() {
-            result.insert(destination_blank, source_blank);
-            used_source_lines.insert(source_blank);
-            unmatched_source_blanks.remove(0);
-        }
+        let Some(source_blank) = unmatched_source_blanks.next() else {
+            break;
+        };
+        result.insert(destination_blank, source_blank);
+        used_source_lines.insert(source_blank);
     }
 
     result
+}
+
+/// Builds a bijective destination-line → source-line mapping.
+fn build_line_mapping<'a>(
+    source_lines: &[FileLine<'a>],
+    destination_lines: &[FileLine<'a>],
+    source_tree: &Tree,
+    destination_tree: &Tree,
+    mapping: &Mapping,
+) -> HashMap<usize, usize> {
+    let candidates = phase1_vote(
+        source_lines,
+        destination_lines,
+        source_tree,
+        destination_tree,
+        mapping,
+    );
+    let (result, used_source_lines) =
+        phase2_interpolate(candidates, source_lines, destination_lines);
+    phase3_blanks(result, used_source_lines, source_lines, destination_lines)
 }
 
 /// Detects which destination lines belong to moved blocks by finding inversions
@@ -217,20 +229,19 @@ fn detect_moved_destination_lines(
     line_mapping: &HashMap<usize, usize>,
     destination_line_count: usize,
 ) -> HashSet<usize> {
-    // Build contiguous blocks of consecutive mapped lines.
     let mut blocks: Vec<(Vec<usize>, usize)> = Vec::new();
 
     for destination_line in 0..destination_line_count {
-        if let Some(&source_line) = line_mapping.get(&destination_line) {
-            let extends_previous = blocks.last().is_some_and(|(dst_lines, first_src)| {
-                let expected_src = first_src + dst_lines.len();
-                source_line == expected_src
-            });
-            if extends_previous {
-                blocks.last_mut().unwrap().0.push(destination_line);
-            } else {
-                blocks.push((vec![destination_line], source_line));
-            }
+        let Some(&source_line) = line_mapping.get(&destination_line) else {
+            continue;
+        };
+        let extends_previous = blocks
+            .last()
+            .is_some_and(|(dst_lines, first_src)| source_line == first_src + dst_lines.len());
+        if extends_previous {
+            blocks.last_mut().unwrap().0.push(destination_line);
+        } else {
+            blocks.push((vec![destination_line], source_line));
         }
     }
 
@@ -238,16 +249,16 @@ fn detect_moved_destination_lines(
         return HashSet::new();
     }
 
-    // Mark blocks participating in inversions.
     let source_representatives: Vec<usize> = blocks.iter().map(|(_, src)| *src).collect();
     let mut moved_block_indices: HashSet<usize> = HashSet::new();
 
     for i in 0..source_representatives.len() {
         for j in (i + 1)..source_representatives.len() {
-            if source_representatives[i] > source_representatives[j] {
-                moved_block_indices.insert(i);
-                moved_block_indices.insert(j);
+            if source_representatives[i] <= source_representatives[j] {
+                continue;
             }
+            moved_block_indices.insert(i);
+            moved_block_indices.insert(j);
         }
     }
 
@@ -281,21 +292,20 @@ fn classify_source_leaves(
         })
         .collect();
 
-    let mut colors = HashMap::new();
-    for node in source_tree.all_nodes() {
-        if !node.children.is_empty() {
-            continue;
-        }
-        let color = if !mapping.has_src(node.id) {
-            SpanColor::Deleted
-        } else if updated_nodes.contains(&node.id) {
-            SpanColor::Updated
-        } else {
-            SpanColor::Unchanged
-        };
-        colors.insert(node.id, color);
-    }
-    colors
+    source_tree
+        .all_nodes()
+        .filter(|n| n.children.is_empty())
+        .map(|n| {
+            let color = if !mapping.has_src(n.id) {
+                SpanColor::Deleted
+            } else if updated_nodes.contains(&n.id) {
+                SpanColor::Updated
+            } else {
+                SpanColor::Unchanged
+            };
+            (n.id, color)
+        })
+        .collect()
 }
 
 fn classify_destination_leaves(
@@ -311,52 +321,48 @@ fn classify_destination_leaves(
         })
         .collect();
 
-    let mut colors = HashMap::new();
-    for node in destination_tree.all_nodes() {
-        if !node.children.is_empty() {
-            continue;
-        }
-        let color = if !mapping.has_dst(node.id) {
-            SpanColor::Inserted
-        } else if mapping
-            .get_src(node.id)
-            .is_some_and(|src_id| updated_source_nodes.contains(&src_id))
-        {
-            SpanColor::Updated
-        } else {
-            SpanColor::Unchanged
-        };
-        colors.insert(node.id, color);
-    }
-    colors
+    destination_tree
+        .all_nodes()
+        .filter(|n| n.children.is_empty())
+        .map(|n| {
+            let color = if !mapping.has_dst(n.id) {
+                SpanColor::Inserted
+            } else if mapping
+                .get_src(n.id)
+                .is_some_and(|src_id| updated_source_nodes.contains(&src_id))
+            {
+                SpanColor::Updated
+            } else {
+                SpanColor::Unchanged
+            };
+            (n.id, color)
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
-struct ColoredSpan {
-    text: String,
+struct ColoredSpan<'a> {
+    text: &'a str,
     color: SpanColor,
 }
 
-fn build_line_spans(
-    line: &FileLine,
+fn build_line_spans<'a>(
+    line: &FileLine<'a>,
     tree: &Tree,
     leaf_colors: &HashMap<NodeId, SpanColor>,
-) -> Vec<ColoredSpan> {
-    let mut node_spans: Vec<(usize, usize, SpanColor)> = Vec::new();
-    for node in tree.all_nodes() {
-        if !node.children.is_empty() {
-            continue;
-        }
-        if node.end_byte <= line.start_byte || node.start_byte >= line.end_byte {
-            continue;
-        }
-        if let Some(&color) = leaf_colors.get(&node.id) {
-            let start = node.start_byte.saturating_sub(line.start_byte);
-            let end = (node.end_byte - line.start_byte).min(line.text.len());
-            let start = start.min(end);
-            node_spans.push((start, end, color));
-        }
-    }
+) -> Vec<ColoredSpan<'a>> {
+    let mut node_spans: Vec<(usize, usize, SpanColor)> = tree
+        .all_nodes()
+        .filter(|n| n.children.is_empty())
+        .filter(|n| n.end_byte > line.start_byte && n.start_byte < line.end_byte)
+        .filter_map(|n| leaf_colors.get(&n.id).map(|&c| (n, c)))
+        .map(|(n, color)| {
+            let start = n.start_byte.saturating_sub(line.start_byte);
+            let end = (n.end_byte - line.start_byte).min(line.text.len());
+            (start.min(end), end, color)
+        })
+        .collect();
+
     node_spans.sort_by_key(|s| s.0);
 
     let mut spans: Vec<ColoredSpan> = Vec::new();
@@ -364,13 +370,13 @@ fn build_line_spans(
     for (start, end, color) in &node_spans {
         if *start > position {
             spans.push(ColoredSpan {
-                text: line.text[position..*start].to_string(),
+                text: &line.text[position..*start],
                 color: SpanColor::Unchanged,
             });
         }
         if *end > *start {
             spans.push(ColoredSpan {
-                text: line.text[*start..*end].to_string(),
+                text: &line.text[*start..*end],
                 color: *color,
             });
         }
@@ -378,23 +384,23 @@ fn build_line_spans(
     }
     if position < line.text.len() {
         spans.push(ColoredSpan {
-            text: line.text[position..].to_string(),
+            text: &line.text[position..],
             color: SpanColor::Unchanged,
         });
     }
     spans
 }
 
-struct OutputRow {
+struct OutputRow<'a> {
     source_line_number: Option<usize>,
-    source_spans: Vec<ColoredSpan>,
+    source_spans: Vec<ColoredSpan<'a>>,
     destination_line_number: Option<usize>,
-    destination_spans: Vec<ColoredSpan>,
+    destination_spans: Vec<ColoredSpan<'a>>,
     is_changed: bool,
     is_moved: bool,
 }
 
-impl OutputRow {
+impl OutputRow<'_> {
     fn source_plain_len(&self) -> usize {
         self.source_spans.iter().map(|s| s.text.len()).sum()
     }
@@ -407,13 +413,13 @@ struct DiffContext<'a> {
     destination_leaf_colors: &'a HashMap<NodeId, SpanColor>,
 }
 
-fn build_output_rows(
-    source_lines: &[FileLine],
-    destination_lines: &[FileLine],
+fn build_output_rows<'a>(
+    source_lines: &[FileLine<'a>],
+    destination_lines: &[FileLine<'a>],
     line_mapping: &HashMap<usize, usize>,
     moved_destination_lines: &HashSet<usize>,
     context: &DiffContext,
-) -> Vec<OutputRow> {
+) -> Vec<OutputRow<'a>> {
     let reverse_mapping: HashMap<usize, usize> =
         line_mapping.iter().map(|(&d, &s)| (s, d)).collect();
 
@@ -428,25 +434,23 @@ fn build_output_rows(
                 for (gap, gap_line) in source_lines
                     .iter()
                     .enumerate()
-                    .take(source_index)
                     .skip(gap_start)
+                    .take(source_index - gap_start)
                 {
-                    if !reverse_mapping.contains_key(&gap) && !emitted_source_lines.contains(&gap) {
-                        let spans = build_line_spans(
-                            gap_line,
-                            context.source_tree,
-                            context.source_leaf_colors,
-                        );
-                        rows.push(OutputRow {
-                            source_line_number: Some(gap + 1),
-                            source_spans: spans,
-                            destination_line_number: None,
-                            destination_spans: Vec::new(),
-                            is_changed: true,
-                            is_moved: false,
-                        });
-                        emitted_source_lines.insert(gap);
+                    if reverse_mapping.contains_key(&gap) || emitted_source_lines.contains(&gap) {
+                        continue;
                     }
+                    let spans =
+                        build_line_spans(gap_line, context.source_tree, context.source_leaf_colors);
+                    rows.push(OutputRow {
+                        source_line_number: Some(gap + 1),
+                        source_spans: spans,
+                        destination_line_number: None,
+                        destination_spans: Vec::new(),
+                        is_changed: true,
+                        is_moved: false,
+                    });
+                    emitted_source_lines.insert(gap);
                 }
             }
 
@@ -491,39 +495,30 @@ fn build_output_rows(
     }
 
     for (source_index, source_line) in source_lines.iter().enumerate() {
-        if !emitted_source_lines.contains(&source_index)
-            && !reverse_mapping.contains_key(&source_index)
+        if emitted_source_lines.contains(&source_index)
+            || reverse_mapping.contains_key(&source_index)
         {
-            let spans =
-                build_line_spans(source_line, context.source_tree, context.source_leaf_colors);
-            rows.push(OutputRow {
-                source_line_number: Some(source_index + 1),
-                source_spans: spans,
-                destination_line_number: None,
-                destination_spans: Vec::new(),
-                is_changed: true,
-                is_moved: false,
-            });
+            continue;
         }
+        let spans = build_line_spans(source_line, context.source_tree, context.source_leaf_colors);
+        rows.push(OutputRow {
+            source_line_number: Some(source_index + 1),
+            source_spans: spans,
+            destination_line_number: None,
+            destination_spans: Vec::new(),
+            is_changed: true,
+            is_moved: false,
+        });
     }
 
     rows
 }
 
 fn extract_hunks(rows: &[OutputRow], context: usize) -> Vec<(usize, usize)> {
-    let changed: Vec<usize> = rows
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| r.is_changed)
-        .map(|(i, _)| i)
-        .collect();
-    if changed.is_empty() {
-        return Vec::new();
-    }
     let mut ranges: Vec<(usize, usize)> = Vec::new();
-    for &index in &changed {
-        let start = index.saturating_sub(context);
-        let end = (index + context + 1).min(rows.len());
+    for (i, _) in rows.iter().enumerate().filter(|(_, r)| r.is_changed) {
+        let start = i.saturating_sub(context);
+        let end = (i + context + 1).min(rows.len());
         if let Some(last) = ranges.last_mut() {
             if start <= last.1 {
                 last.1 = end;
@@ -536,17 +531,15 @@ fn extract_hunks(rows: &[OutputRow], context: usize) -> Vec<(usize, usize)> {
 }
 
 fn render_spans(spans: &[ColoredSpan]) -> String {
-    let mut result = String::new();
-    for span in spans {
-        let colored = match span.color {
+    spans
+        .iter()
+        .map(|span| match span.color {
             SpanColor::Unchanged => span.text.to_string(),
             SpanColor::Updated => span.text.yellow().to_string(),
             SpanColor::Deleted => span.text.red().to_string(),
             SpanColor::Inserted => span.text.green().to_string(),
-        };
-        result.push_str(&colored);
-    }
-    result
+        })
+        .collect()
 }
 
 fn render_row(
@@ -606,9 +599,9 @@ fn render_separator(line_number_width: usize, content_width: usize, output: &mut
     .unwrap();
 }
 
-pub fn format_side_by_side(
-    source_bytes: &[u8],
-    destination_bytes: &[u8],
+pub fn format_side_by_side<'a>(
+    source_bytes: &'a [u8],
+    destination_bytes: &'a [u8],
     source_tree: &Tree,
     destination_tree: &Tree,
     mapping: &Mapping,
