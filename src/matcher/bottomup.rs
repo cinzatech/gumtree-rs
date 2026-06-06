@@ -123,14 +123,69 @@ pub fn recover_simple(
     let source_descendants = source_tree.descendants(source_node);
     let destination_descendants = destination_tree.descendants(destination_node);
 
-    // Phase 1: exact (kind, label) histogram pairing.
+    // Phase 1a: exact (kind, label) histogram pairing for LEAF nodes only.
+    // Only match when the candidate is unique — common tokens like `def`,
+    // `(`, `)` have multiple candidates and would pollute Dice scores if
+    // matched arbitrarily.
     let mut by_kind_label: HashMap<(String, String), Vec<NodeId>> = HashMap::new();
     for descendant in &destination_descendants {
         if mapping.has_dst(*descendant) {
             continue;
         }
         let node = destination_tree.node(*descendant);
+        if !node.children.is_empty() {
+            continue;
+        }
         by_kind_label
+            .entry((node.kind.clone(), node.label.clone()))
+            .or_default()
+            .push(*descendant);
+    }
+    // Count source occurrences to detect ambiguity on the source side too.
+    let mut source_leaf_counts: HashMap<(String, String), usize> = HashMap::new();
+    for descendant in &source_descendants {
+        if mapping.has_src(*descendant) {
+            continue;
+        }
+        let node = source_tree.node(*descendant);
+        if !node.children.is_empty() {
+            continue;
+        }
+        *source_leaf_counts
+            .entry((node.kind.clone(), node.label.clone()))
+            .or_insert(0) += 1;
+    }
+    for descendant in &source_descendants {
+        if mapping.has_src(*descendant) {
+            continue;
+        }
+        let node = source_tree.node(*descendant);
+        if !node.children.is_empty() {
+            continue;
+        }
+        let key = (node.kind.clone(), node.label.clone());
+        let source_count = source_leaf_counts.get(&key).copied().unwrap_or(0);
+        if let Some(bucket) = by_kind_label.get_mut(&key) {
+            if bucket.len() == 1 && source_count == 1 {
+                mapping.link(*descendant, bucket.pop().unwrap());
+            }
+        }
+    }
+
+    // Phase 1b: match non-leaf nodes by (kind, label). When multiple
+    // candidates share the same key, pick the one with the highest Dice
+    // similarity (which reflects how many of their descendants are already
+    // matched from Phase 1a).
+    let mut by_kind_label_inner: HashMap<(String, String), Vec<NodeId>> = HashMap::new();
+    for descendant in &destination_descendants {
+        if mapping.has_dst(*descendant) {
+            continue;
+        }
+        let node = destination_tree.node(*descendant);
+        if node.children.is_empty() {
+            continue;
+        }
+        by_kind_label_inner
             .entry((node.kind.clone(), node.label.clone()))
             .or_default()
             .push(*descendant);
@@ -140,10 +195,47 @@ pub fn recover_simple(
             continue;
         }
         let node = source_tree.node(*descendant);
+        if node.children.is_empty() {
+            continue;
+        }
         let key = (node.kind.clone(), node.label.clone());
-        if let Some(bucket) = by_kind_label.get_mut(&key) {
-            if let Some(matched_destination) = bucket.pop() {
-                mapping.link(*descendant, matched_destination);
+        if let Some(bucket) = by_kind_label_inner.get_mut(&key) {
+            if bucket.is_empty() {
+                continue;
+            }
+            if bucket.len() == 1 {
+                let candidate = bucket[0];
+                let dice = dice_coefficient(
+                    source_tree,
+                    *descendant,
+                    destination_tree,
+                    candidate,
+                    mapping,
+                );
+                if dice > 0.0 {
+                    bucket.pop();
+                    mapping.link(*descendant, candidate);
+                }
+            } else {
+                let best = bucket
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &candidate)| {
+                        let dice = dice_coefficient(
+                            source_tree,
+                            *descendant,
+                            destination_tree,
+                            candidate,
+                            mapping,
+                        );
+                        (i, dice)
+                    })
+                    .filter(|(_, dice)| *dice > 0.0)
+                    .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                if let Some((index, _)) = best {
+                    let matched = bucket.remove(index);
+                    mapping.link(*descendant, matched);
+                }
             }
         }
     }
@@ -408,6 +500,90 @@ mod tests {
         assert!(
             mapping.has_src(second_anchor),
             "second anchor should be mapped"
+        );
+    }
+
+    #[test]
+    fn recover_simple_matches_containers_by_content_not_position() {
+        // Simulates reordered Python functions: source has [greet, add, think],
+        // destination has [add, greet, think]. After top-down matches `add`
+        // (identical subtree), recovery must pair greet↔greet and think↔think
+        // by their content (matched identifiers), NOT by sibling position.
+        //
+        // The bug: all function_definition nodes share (kind, label) =
+        // ("function_definition", ""), so Phase 1's histogram matching pairs
+        // them arbitrarily. This causes children to scatter across functions.
+        let mut src = TreeBuilder::new();
+        let sr = src.add("module", "", None, 0, 100);
+        let s_greet_fn = src.add("function_definition", "", Some(sr), 0, 30);
+        let _s_greet_id = src.add("identifier", "greet", Some(s_greet_fn), 4, 9);
+        let s_greet_params = src.add("parameters", "", Some(s_greet_fn), 9, 15);
+        let _s_greet_name = src.add("identifier", "name", Some(s_greet_params), 10, 14);
+        let s_add_fn = src.add("function_definition", "", Some(sr), 31, 60);
+        let _s_add_id = src.add("identifier", "add", Some(s_add_fn), 35, 38);
+        let s_add_params = src.add("parameters", "", Some(s_add_fn), 38, 44);
+        let _s_add_a = src.add("identifier", "a", Some(s_add_params), 39, 40);
+        let _s_add_b = src.add("identifier", "b", Some(s_add_params), 42, 43);
+        let s_think_fn = src.add("function_definition", "", Some(sr), 61, 100);
+        let _s_think_id = src.add("identifier", "think", Some(s_think_fn), 65, 70);
+        let s_think_params = src.add("parameters", "", Some(s_think_fn), 70, 78);
+        let _s_think_about = src.add("identifier", "about", Some(s_think_params), 71, 76);
+        let source_tree = src.build(sr);
+
+        let mut dst = TreeBuilder::new();
+        let dr = dst.add("module", "", None, 0, 100);
+        let d_add_fn = dst.add("function_definition", "", Some(dr), 0, 30);
+        let _d_add_id = dst.add("identifier", "add", Some(d_add_fn), 4, 7);
+        let d_add_params = dst.add("parameters", "", Some(d_add_fn), 7, 13);
+        let _d_add_a = dst.add("identifier", "a", Some(d_add_params), 8, 9);
+        let _d_add_b = dst.add("identifier", "b", Some(d_add_params), 11, 12);
+        let d_greet_fn = dst.add("function_definition", "", Some(dr), 31, 60);
+        let _d_greet_id = dst.add("identifier", "greet", Some(d_greet_fn), 35, 40);
+        let d_greet_params = dst.add("parameters", "", Some(d_greet_fn), 40, 48);
+        let _d_greet_person = dst.add("identifier", "person", Some(d_greet_params), 41, 47);
+        let d_think_fn = dst.add("function_definition", "", Some(dr), 61, 100);
+        let _d_think_id = dst.add("identifier", "think", Some(d_think_fn), 65, 70);
+        let d_think_params = dst.add("parameters", "", Some(d_think_fn), 70, 80);
+        let _d_think_thought = dst.add("identifier", "thought", Some(d_think_params), 71, 78);
+        let destination_tree = dst.build(dr);
+
+        let mut mapping = Mapping::new();
+        match_top_down(
+            &source_tree,
+            &destination_tree,
+            &mut mapping,
+            DEFAULT_MIN_HEIGHT,
+        );
+        assert!(mapping.has_src(s_add_fn), "top-down should anchor add");
+
+        match_bottom_up(
+            &source_tree,
+            &destination_tree,
+            &mut mapping,
+            DEFAULT_MIN_DICE,
+            DEFAULT_MAX_SIZE,
+        );
+
+        if !mapping.has_src(source_tree.root()) {
+            mapping.link(source_tree.root(), destination_tree.root());
+            recover_simple(
+                &source_tree,
+                source_tree.root(),
+                &destination_tree,
+                destination_tree.root(),
+                &mut mapping,
+            );
+        }
+
+        assert_eq!(
+            mapping.get_dst(s_greet_fn),
+            Some(d_greet_fn),
+            "greet's function_definition should map to greet's, not another function"
+        );
+        assert_eq!(
+            mapping.get_dst(s_think_fn),
+            Some(d_think_fn),
+            "think's function_definition should map to think's, not another function"
         );
     }
 }
