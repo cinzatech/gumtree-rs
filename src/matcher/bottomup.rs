@@ -40,29 +40,32 @@ pub fn match_bottom_up(
         if !has_matched_descendant(source_tree, source_node, mapping) {
             continue;
         }
-        if let Some(destination_node) = find_candidate(
+        let Some(destination_node) = find_candidate(
             source_tree,
             source_node,
             destination_tree,
             mapping,
             min_dice,
             &kind_index,
-        ) {
-            mapping.link(source_node, destination_node);
-            if source_tree
-                .node(source_node)
-                .size
-                .max(destination_tree.node(destination_node).size)
-                < max_size
-            {
-                recover_simple(
-                    source_tree,
-                    source_node,
-                    destination_tree,
-                    destination_node,
-                    mapping,
-                );
-            }
+        ) else {
+            continue;
+        };
+
+        mapping.link(source_node, destination_node);
+
+        let max_subtree_size = source_tree
+            .node(source_node)
+            .size
+            .max(destination_tree.node(destination_node).size);
+
+        if max_subtree_size < max_size {
+            recover_simple(
+                source_tree,
+                source_node,
+                destination_tree,
+                destination_node,
+                mapping,
+            );
         }
     }
 }
@@ -84,28 +87,24 @@ fn find_candidate<'a>(
 ) -> Option<NodeId> {
     let kind = &source_tree.node(source_node).kind;
     let candidates = kind_index.get(kind.as_str())?;
-    let mut best: Option<(NodeId, f64)> = None;
-    for &candidate in candidates {
-        if mapping.has_dst(candidate) {
-            continue;
-        }
-        let dice = dice_coefficient(
-            source_tree,
-            source_node,
-            destination_tree,
-            candidate,
-            mapping,
-        );
-        if dice < min_dice {
-            continue;
-        }
-        match best {
-            None => best = Some((candidate, dice)),
-            Some((_, best_dice)) if dice > best_dice => best = Some((candidate, dice)),
-            _ => {}
-        }
-    }
-    best.map(|(node_id, _)| node_id)
+
+    candidates
+        .iter()
+        .copied()
+        .filter(|candidate| !mapping.has_dst(*candidate))
+        .map(|candidate| {
+            let dice = dice_coefficient(
+                source_tree,
+                source_node,
+                destination_tree,
+                candidate,
+                mapping,
+            );
+            (candidate, dice)
+        })
+        .filter(|(_, dice)| *dice >= min_dice)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(node_id, _)| node_id)
 }
 
 /// SimpleGumTree's cheap recovery: match remaining unmapped descendants by
@@ -123,159 +122,208 @@ pub fn recover_simple(
     let source_descendants = source_tree.descendants(source_node);
     let destination_descendants = destination_tree.descendants(destination_node);
 
-    // Phase 1a: exact (kind, label) histogram pairing for LEAF nodes only.
-    // Only match when the candidate is unique — common tokens like `def`,
-    // `(`, `)` have multiple candidates and would pollute Dice scores if
-    // matched arbitrarily.
-    let mut by_kind_label: HashMap<(String, String), Vec<NodeId>> = HashMap::new();
-    for descendant in &destination_descendants {
-        if mapping.has_dst(*descendant) {
-            continue;
-        }
-        let node = destination_tree.node(*descendant);
-        if !node.children.is_empty() {
-            continue;
-        }
-        by_kind_label
-            .entry((node.kind.clone(), node.label.clone()))
-            .or_default()
-            .push(*descendant);
-    }
-    // Count source occurrences to detect ambiguity on the source side too.
-    let mut source_leaf_counts: HashMap<(String, String), usize> = HashMap::new();
-    for descendant in &source_descendants {
-        if mapping.has_src(*descendant) {
-            continue;
-        }
-        let node = source_tree.node(*descendant);
-        if !node.children.is_empty() {
-            continue;
-        }
-        *source_leaf_counts
-            .entry((node.kind.clone(), node.label.clone()))
-            .or_insert(0) += 1;
-    }
-    for descendant in &source_descendants {
-        if mapping.has_src(*descendant) {
-            continue;
-        }
-        let node = source_tree.node(*descendant);
-        if !node.children.is_empty() {
-            continue;
-        }
-        let key = (node.kind.clone(), node.label.clone());
-        let source_count = source_leaf_counts.get(&key).copied().unwrap_or(0);
-        if let Some(bucket) = by_kind_label.get_mut(&key) {
-            if bucket.len() == 1 && source_count == 1 {
-                mapping.link(*descendant, bucket.pop().unwrap());
-            }
-        }
-    }
+    recover_exact_leaves(
+        source_tree,
+        destination_tree,
+        &source_descendants,
+        &destination_descendants,
+        mapping,
+    );
 
-    // Phase 1b: match non-leaf nodes by (kind, label). When multiple
-    // candidates share the same key, pick the one with the highest Dice
-    // similarity (which reflects how many of their descendants are already
-    // matched from Phase 1a).
-    let mut by_kind_label_inner: HashMap<(String, String), Vec<NodeId>> = HashMap::new();
-    for descendant in &destination_descendants {
-        if mapping.has_dst(*descendant) {
+    recover_inner_nodes(
+        source_tree,
+        destination_tree,
+        &source_descendants,
+        &destination_descendants,
+        mapping,
+    );
+
+    recover_by_parent(source_tree, destination_tree, &source_descendants, mapping);
+}
+
+/// Phase 1a: exact (kind, label) histogram pairing for LEAF nodes only.
+/// Only match when the candidate is unique — common tokens like `def`,
+/// `(`, `)` have multiple candidates and would pollute Dice scores if
+/// matched arbitrarily.
+fn recover_exact_leaves(
+    source_tree: &Tree,
+    destination_tree: &Tree,
+    source_descendants: &[NodeId],
+    destination_descendants: &[NodeId],
+    mapping: &mut Mapping,
+) {
+    let mut destination_buckets: HashMap<(&str, &str), Vec<NodeId>> = destination_descendants
+        .iter()
+        .copied()
+        .filter(|node_id| !mapping.has_dst(*node_id))
+        .map(|node_id| (node_id, destination_tree.node(node_id)))
+        .filter(|(_, node)| node.children.is_empty())
+        .fold(HashMap::new(), |mut acc, (node_id, node)| {
+            acc.entry((node.kind.as_str(), node.label.as_str()))
+                .or_default()
+                .push(node_id);
+            acc
+        });
+
+    let source_leaf_counts: HashMap<(&str, &str), usize> = source_descendants
+        .iter()
+        .copied()
+        .filter(|node_id| !mapping.has_src(*node_id))
+        .map(|node_id| (node_id, source_tree.node(node_id)))
+        .filter(|(_, node)| node.children.is_empty())
+        .fold(HashMap::new(), |mut acc, (_, node)| {
+            *acc.entry((node.kind.as_str(), node.label.as_str()))
+                .or_insert(0) += 1;
+            acc
+        });
+
+    for source_descendant in source_descendants {
+        if mapping.has_src(*source_descendant) {
             continue;
         }
-        let node = destination_tree.node(*descendant);
-        if node.children.is_empty() {
+        let source_node = source_tree.node(*source_descendant);
+        if !source_node.children.is_empty() {
             continue;
         }
-        by_kind_label_inner
-            .entry((node.kind.clone(), node.label.clone()))
-            .or_default()
-            .push(*descendant);
+
+        let key = (source_node.kind.as_str(), source_node.label.as_str());
+        let source_count = source_leaf_counts.get(&key).copied().unwrap_or(0);
+
+        let Some(bucket) = destination_buckets.get_mut(&key) else {
+            continue;
+        };
+        if bucket.len() == 1 && source_count == 1 {
+            mapping.link(*source_descendant, bucket.pop().unwrap());
+        }
     }
-    for descendant in &source_descendants {
-        if mapping.has_src(*descendant) {
+}
+
+/// Phase 1b: match non-leaf nodes by (kind, label). When multiple
+/// candidates share the same key, pick the one with the highest Dice
+/// similarity (which reflects how many of their descendants are already
+/// matched from Phase 1a).
+fn recover_inner_nodes(
+    source_tree: &Tree,
+    destination_tree: &Tree,
+    source_descendants: &[NodeId],
+    destination_descendants: &[NodeId],
+    mapping: &mut Mapping,
+) {
+    let mut destination_buckets: HashMap<(&str, &str), Vec<NodeId>> = destination_descendants
+        .iter()
+        .copied()
+        .filter(|node_id| !mapping.has_dst(*node_id))
+        .map(|node_id| (node_id, destination_tree.node(node_id)))
+        .filter(|(_, node)| !node.children.is_empty())
+        .fold(HashMap::new(), |mut acc, (node_id, node)| {
+            acc.entry((node.kind.as_str(), node.label.as_str()))
+                .or_default()
+                .push(node_id);
+            acc
+        });
+
+    for source_descendant in source_descendants {
+        if mapping.has_src(*source_descendant) {
             continue;
         }
-        let node = source_tree.node(*descendant);
-        if node.children.is_empty() {
+        let source_node = source_tree.node(*source_descendant);
+        if source_node.children.is_empty() {
             continue;
         }
-        let key = (node.kind.clone(), node.label.clone());
-        if let Some(bucket) = by_kind_label_inner.get_mut(&key) {
-            if bucket.is_empty() {
-                continue;
+
+        let key = (source_node.kind.as_str(), source_node.label.as_str());
+        let Some(bucket) = destination_buckets.get_mut(&key) else {
+            continue;
+        };
+        if bucket.is_empty() {
+            continue;
+        }
+
+        if bucket.len() == 1 {
+            let candidate = bucket[0];
+            let dice = dice_coefficient(
+                source_tree,
+                *source_descendant,
+                destination_tree,
+                candidate,
+                mapping,
+            );
+            if dice > 0.0 {
+                bucket.pop();
+                mapping.link(*source_descendant, candidate);
             }
-            if bucket.len() == 1 {
-                let candidate = bucket[0];
+            continue;
+        }
+
+        let best = bucket
+            .iter()
+            .enumerate()
+            .map(|(index, &candidate)| {
                 let dice = dice_coefficient(
                     source_tree,
-                    *descendant,
+                    *source_descendant,
                     destination_tree,
                     candidate,
                     mapping,
                 );
-                if dice > 0.0 {
-                    bucket.pop();
-                    mapping.link(*descendant, candidate);
-                }
-            } else {
-                let best = bucket
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &candidate)| {
-                        let dice = dice_coefficient(
-                            source_tree,
-                            *descendant,
-                            destination_tree,
-                            candidate,
-                            mapping,
-                        );
-                        (i, dice)
-                    })
-                    .filter(|(_, dice)| *dice > 0.0)
-                    .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                if let Some((index, _)) = best {
-                    let matched = bucket.remove(index);
-                    mapping.link(*descendant, matched);
-                }
-            }
-        }
-    }
+                (index, dice)
+            })
+            .filter(|(_, dice)| *dice > 0.0)
+            .max_by(|a, b| a.1.total_cmp(&b.1));
 
-    // Phase 2: among still-unmapped, match by parent correspondence + kind.
-    // This catches leaves whose label changed (so phase 1 missed them) but
-    // whose parents are already mapped.
-    for descendant in &source_descendants {
-        if mapping.has_src(*descendant) {
+        let Some((best_index, _)) = best else {
+            continue;
+        };
+        let matched = bucket.remove(best_index);
+        mapping.link(*source_descendant, matched);
+    }
+}
+
+/// Phase 2: among still-unmapped, match by parent correspondence + kind.
+/// This catches leaves whose label changed (so phase 1 missed them) but
+/// whose parents are already mapped.
+fn recover_by_parent(
+    source_tree: &Tree,
+    destination_tree: &Tree,
+    source_descendants: &[NodeId],
+    mapping: &mut Mapping,
+) {
+    for source_descendant in source_descendants {
+        if mapping.has_src(*source_descendant) {
             continue;
         }
-        let parent_id = match source_tree.node(*descendant).parent {
-            Some(parent) => parent,
-            None => continue,
+
+        let source_node = source_tree.node(*source_descendant);
+        let Some(parent_id) = source_node.parent else {
+            continue;
         };
-        let mapped_parent = match mapping.get_dst(parent_id) {
-            Some(destination_parent) => destination_parent,
-            None => continue,
+        let Some(mapped_parent) = mapping.get_dst(parent_id) else {
+            continue;
         };
-        let kind = source_tree.node(*descendant).kind.clone();
+
+        let kind = &source_node.kind;
 
         // Same-index sibling first (preserves position when possible).
         let sibling_index = source_tree
             .node(parent_id)
             .children
             .iter()
-            .position(|&child_id| child_id == *descendant)
+            .position(|&child_id| child_id == *source_descendant)
             .unwrap();
-        let candidates = &destination_tree.node(mapped_parent).children;
-        if sibling_index < candidates.len() {
-            let candidate = candidates[sibling_index];
-            if !mapping.has_dst(candidate) && destination_tree.node(candidate).kind == kind {
-                mapping.link(*descendant, candidate);
+
+        let destination_siblings = &destination_tree.node(mapped_parent).children;
+        if sibling_index < destination_siblings.len() {
+            let candidate = destination_siblings[sibling_index];
+            if !mapping.has_dst(candidate) && destination_tree.node(candidate).kind == *kind {
+                mapping.link(*source_descendant, candidate);
                 continue;
             }
         }
+
         // Otherwise, first unmapped same-kind sibling.
-        for &candidate in candidates {
-            if !mapping.has_dst(candidate) && destination_tree.node(candidate).kind == kind {
-                mapping.link(*descendant, candidate);
+        for &candidate in destination_siblings {
+            if !mapping.has_dst(candidate) && destination_tree.node(candidate).kind == *kind {
+                mapping.link(*source_descendant, candidate);
                 break;
             }
         }
@@ -513,39 +561,71 @@ mod tests {
         // The bug: all function_definition nodes share (kind, label) =
         // ("function_definition", ""), so Phase 1's histogram matching pairs
         // them arbitrarily. This causes children to scatter across functions.
-        let mut src = TreeBuilder::new();
-        let sr = src.add("module", "", None, 0, 100);
-        let s_greet_fn = src.add("function_definition", "", Some(sr), 0, 30);
-        let _s_greet_id = src.add("identifier", "greet", Some(s_greet_fn), 4, 9);
-        let s_greet_params = src.add("parameters", "", Some(s_greet_fn), 9, 15);
-        let _s_greet_name = src.add("identifier", "name", Some(s_greet_params), 10, 14);
-        let s_add_fn = src.add("function_definition", "", Some(sr), 31, 60);
-        let _s_add_id = src.add("identifier", "add", Some(s_add_fn), 35, 38);
-        let s_add_params = src.add("parameters", "", Some(s_add_fn), 38, 44);
-        let _s_add_a = src.add("identifier", "a", Some(s_add_params), 39, 40);
-        let _s_add_b = src.add("identifier", "b", Some(s_add_params), 42, 43);
-        let s_think_fn = src.add("function_definition", "", Some(sr), 61, 100);
-        let _s_think_id = src.add("identifier", "think", Some(s_think_fn), 65, 70);
-        let s_think_params = src.add("parameters", "", Some(s_think_fn), 70, 78);
-        let _s_think_about = src.add("identifier", "about", Some(s_think_params), 71, 76);
-        let source_tree = src.build(sr);
+        let mut source_builder = TreeBuilder::new();
+        let source_root = source_builder.add("module", "", None, 0, 100);
+        let source_greet_fn =
+            source_builder.add("function_definition", "", Some(source_root), 0, 30);
+        let _source_greet_id =
+            source_builder.add("identifier", "greet", Some(source_greet_fn), 4, 9);
+        let source_greet_params =
+            source_builder.add("parameters", "", Some(source_greet_fn), 9, 15);
+        let _source_greet_name =
+            source_builder.add("identifier", "name", Some(source_greet_params), 10, 14);
+        let source_add_fn =
+            source_builder.add("function_definition", "", Some(source_root), 31, 60);
+        let _source_add_id = source_builder.add("identifier", "add", Some(source_add_fn), 35, 38);
+        let source_add_params = source_builder.add("parameters", "", Some(source_add_fn), 38, 44);
+        let _source_add_a = source_builder.add("identifier", "a", Some(source_add_params), 39, 40);
+        let _source_add_b = source_builder.add("identifier", "b", Some(source_add_params), 42, 43);
+        let source_think_fn =
+            source_builder.add("function_definition", "", Some(source_root), 61, 100);
+        let _source_think_id =
+            source_builder.add("identifier", "think", Some(source_think_fn), 65, 70);
+        let source_think_params =
+            source_builder.add("parameters", "", Some(source_think_fn), 70, 78);
+        let _source_think_about =
+            source_builder.add("identifier", "about", Some(source_think_params), 71, 76);
+        let source_tree = source_builder.build(source_root);
 
-        let mut dst = TreeBuilder::new();
-        let dr = dst.add("module", "", None, 0, 100);
-        let d_add_fn = dst.add("function_definition", "", Some(dr), 0, 30);
-        let _d_add_id = dst.add("identifier", "add", Some(d_add_fn), 4, 7);
-        let d_add_params = dst.add("parameters", "", Some(d_add_fn), 7, 13);
-        let _d_add_a = dst.add("identifier", "a", Some(d_add_params), 8, 9);
-        let _d_add_b = dst.add("identifier", "b", Some(d_add_params), 11, 12);
-        let d_greet_fn = dst.add("function_definition", "", Some(dr), 31, 60);
-        let _d_greet_id = dst.add("identifier", "greet", Some(d_greet_fn), 35, 40);
-        let d_greet_params = dst.add("parameters", "", Some(d_greet_fn), 40, 48);
-        let _d_greet_person = dst.add("identifier", "person", Some(d_greet_params), 41, 47);
-        let d_think_fn = dst.add("function_definition", "", Some(dr), 61, 100);
-        let _d_think_id = dst.add("identifier", "think", Some(d_think_fn), 65, 70);
-        let d_think_params = dst.add("parameters", "", Some(d_think_fn), 70, 80);
-        let _d_think_thought = dst.add("identifier", "thought", Some(d_think_params), 71, 78);
-        let destination_tree = dst.build(dr);
+        let mut destination_builder = TreeBuilder::new();
+        let destination_root = destination_builder.add("module", "", None, 0, 100);
+        let destination_add_fn =
+            destination_builder.add("function_definition", "", Some(destination_root), 0, 30);
+        let _destination_add_id =
+            destination_builder.add("identifier", "add", Some(destination_add_fn), 4, 7);
+        let destination_add_params =
+            destination_builder.add("parameters", "", Some(destination_add_fn), 7, 13);
+        let _destination_add_a =
+            destination_builder.add("identifier", "a", Some(destination_add_params), 8, 9);
+        let _destination_add_b =
+            destination_builder.add("identifier", "b", Some(destination_add_params), 11, 12);
+        let destination_greet_fn =
+            destination_builder.add("function_definition", "", Some(destination_root), 31, 60);
+        let _destination_greet_id =
+            destination_builder.add("identifier", "greet", Some(destination_greet_fn), 35, 40);
+        let destination_greet_params =
+            destination_builder.add("parameters", "", Some(destination_greet_fn), 40, 48);
+        let _destination_greet_person = destination_builder.add(
+            "identifier",
+            "person",
+            Some(destination_greet_params),
+            41,
+            47,
+        );
+        let destination_think_fn =
+            destination_builder.add("function_definition", "", Some(destination_root), 61, 100);
+        let _destination_think_id =
+            destination_builder.add("identifier", "think", Some(destination_think_fn), 65, 70);
+        let destination_think_params =
+            destination_builder.add("parameters", "", Some(destination_think_fn), 70, 80);
+        let _destination_think_thought = destination_builder.add(
+            "identifier",
+            "thought",
+            Some(destination_think_params),
+            71,
+            78,
+        );
+        let destination_tree = destination_builder.build(destination_root);
 
         let mut mapping = Mapping::new();
         match_top_down(
@@ -554,7 +634,7 @@ mod tests {
             &mut mapping,
             DEFAULT_MIN_HEIGHT,
         );
-        assert!(mapping.has_src(s_add_fn), "top-down should anchor add");
+        assert!(mapping.has_src(source_add_fn), "top-down should anchor add");
 
         match_bottom_up(
             &source_tree,
@@ -576,13 +656,13 @@ mod tests {
         }
 
         assert_eq!(
-            mapping.get_dst(s_greet_fn),
-            Some(d_greet_fn),
+            mapping.get_dst(source_greet_fn),
+            Some(destination_greet_fn),
             "greet's function_definition should map to greet's, not another function"
         );
         assert_eq!(
-            mapping.get_dst(s_think_fn),
-            Some(d_think_fn),
+            mapping.get_dst(source_think_fn),
+            Some(destination_think_fn),
             "think's function_definition should map to think's, not another function"
         );
     }

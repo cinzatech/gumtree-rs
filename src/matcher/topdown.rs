@@ -30,73 +30,38 @@ pub fn match_top_down(
     let mut ambiguous: Vec<(NodeId, NodeId)> = Vec::new();
 
     loop {
-        let source_height = source_queue.peek_height();
-        let destination_height = destination_queue.peek_height();
-
-        let (source_top, destination_top) = match (source_height, destination_height) {
-            (Some(source), Some(destination)) => (source, destination),
-            _ => break,
+        let Some(source_height) = source_queue.peek_height() else {
+            break;
         };
-        let max_height = source_top.max(destination_top);
+        let Some(destination_height) = destination_queue.peek_height() else {
+            break;
+        };
+
+        let max_height = source_height.max(destination_height);
         if max_height <= min_height {
             break;
         }
 
-        if source_top > destination_top {
+        if source_height > destination_height {
             for node_id in source_queue.pop_max() {
                 source_queue.open(source_tree, node_id);
             }
-        } else if destination_top > source_top {
+        } else if destination_height > source_height {
             for node_id in destination_queue.pop_max() {
                 destination_queue.open(destination_tree, node_id);
             }
         } else {
-            // Equal heights: try to find isomorphic matches at this height.
             let source_nodes = source_queue.pop_max();
             let destination_nodes = destination_queue.pop_max();
+            let (matched_sources, matched_destinations) = match_at_height(
+                source_tree,
+                destination_tree,
+                &source_nodes,
+                &destination_nodes,
+                mapping,
+                &mut ambiguous,
+            );
 
-            let mut matched_sources: HashSet<NodeId> = HashSet::new();
-            let mut matched_destinations: HashSet<NodeId> = HashSet::new();
-
-            // Collect every isomorphic pair.
-            let mut iso_pairs: Vec<(NodeId, NodeId)> = Vec::new();
-            for &source_node in &source_nodes {
-                for &destination_node in &destination_nodes {
-                    if is_isomorphic(source_tree, source_node, destination_tree, destination_node) {
-                        iso_pairs.push((source_node, destination_node));
-                    }
-                }
-            }
-
-            // Count occurrences to detect ambiguity.
-            let mut source_count: HashMap<NodeId, usize> = HashMap::new();
-            let mut destination_count: HashMap<NodeId, usize> = HashMap::new();
-            for &(source, destination) in &iso_pairs {
-                *source_count.entry(source).or_insert(0) += 1;
-                *destination_count.entry(destination).or_insert(0) += 1;
-            }
-
-            for (source, destination) in &iso_pairs {
-                if source_count[source] == 1 && destination_count[destination] == 1 {
-                    if !mapping.has_src(*source) && !mapping.has_dst(*destination) {
-                        map_isomorphic_subtree(
-                            source_tree,
-                            *source,
-                            destination_tree,
-                            *destination,
-                            mapping,
-                        );
-                    }
-                    matched_sources.insert(*source);
-                    matched_destinations.insert(*destination);
-                } else {
-                    ambiguous.push((*source, *destination));
-                    matched_sources.insert(*source);
-                    matched_destinations.insert(*destination);
-                }
-            }
-
-            // Nodes that didn't match anything: open their children.
             for node_id in &source_nodes {
                 if !matched_sources.contains(node_id) {
                     source_queue.open(source_tree, *node_id);
@@ -113,26 +78,91 @@ pub fn match_top_down(
     // Resolve ambiguous candidates by parent-context dice, descending.
     let mut scored: Vec<(f64, NodeId, NodeId)> = ambiguous
         .into_iter()
-        .map(|(source, destination)| {
-            (
-                parent_dice(source_tree, destination_tree, source, destination, mapping),
-                source,
-                destination,
-            )
+        .map(|(source_node, destination_node)| {
+            let score = parent_dice(
+                source_tree,
+                destination_tree,
+                source_node,
+                destination_node,
+                mapping,
+            );
+            (score, source_node, destination_node)
         })
         .collect();
-    scored.sort_by(|left, right| {
-        right
-            .0
-            .partial_cmp(&left.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    scored.sort_by(|left, right| right.0.total_cmp(&left.0));
 
-    for (_, source, destination) in scored {
-        if !mapping.has_src(source) && !mapping.has_dst(destination) {
-            map_isomorphic_subtree(source_tree, source, destination_tree, destination, mapping);
+    for (_, source_node, destination_node) in scored {
+        if !mapping.has_src(source_node) && !mapping.has_dst(destination_node) {
+            map_isomorphic_subtree(
+                source_tree,
+                source_node,
+                destination_tree,
+                destination_node,
+                mapping,
+            );
         }
     }
+}
+
+/// Attempts to match isomorphic nodes at the same height level.
+/// Unique matches are linked immediately; ambiguous ones are deferred.
+/// Returns the sets of source and destination nodes that were matched
+/// (either uniquely or ambiguously) so the caller knows which nodes NOT to open.
+fn match_at_height(
+    source_tree: &Tree,
+    destination_tree: &Tree,
+    source_nodes: &[NodeId],
+    destination_nodes: &[NodeId],
+    mapping: &mut Mapping,
+    ambiguous: &mut Vec<(NodeId, NodeId)>,
+) -> (HashSet<NodeId>, HashSet<NodeId>) {
+    // Collect every isomorphic pair.
+    let iso_pairs: Vec<(NodeId, NodeId)> = source_nodes
+        .iter()
+        .flat_map(|&source_node| {
+            destination_nodes
+                .iter()
+                .copied()
+                .filter(move |&destination_node| {
+                    is_isomorphic(source_tree, source_node, destination_tree, destination_node)
+                })
+                .map(move |destination_node| (source_node, destination_node))
+        })
+        .collect();
+
+    // Count occurrences to detect ambiguity.
+    let mut source_count: HashMap<NodeId, usize> = HashMap::new();
+    let mut destination_count: HashMap<NodeId, usize> = HashMap::new();
+    for &(source_node, destination_node) in &iso_pairs {
+        *source_count.entry(source_node).or_insert(0) += 1;
+        *destination_count.entry(destination_node).or_insert(0) += 1;
+    }
+
+    let mut matched_sources: HashSet<NodeId> = HashSet::new();
+    let mut matched_destinations: HashSet<NodeId> = HashSet::new();
+
+    for (source_node, destination_node) in &iso_pairs {
+        matched_sources.insert(*source_node);
+        matched_destinations.insert(*destination_node);
+
+        let is_unique = source_count[source_node] == 1 && destination_count[destination_node] == 1;
+        if !is_unique {
+            ambiguous.push((*source_node, *destination_node));
+            continue;
+        }
+        if mapping.has_src(*source_node) || mapping.has_dst(*destination_node) {
+            continue;
+        }
+        map_isomorphic_subtree(
+            source_tree,
+            *source_node,
+            destination_tree,
+            *destination_node,
+            mapping,
+        );
+    }
+
+    (matched_sources, matched_destinations)
 }
 
 /// Two nodes are isomorphic if their structural hashes match (which already
@@ -144,8 +174,9 @@ fn is_isomorphic(
     destination_tree: &Tree,
     destination_node: NodeId,
 ) -> bool {
-    source_tree.node(source_node).hash == destination_tree.node(destination_node).hash
-        && source_tree.node(source_node).kind == destination_tree.node(destination_node).kind
+    let source_data = source_tree.node(source_node);
+    let destination_data = destination_tree.node(destination_node);
+    source_data.hash == destination_data.hash && source_data.kind == destination_data.kind
 }
 
 /// Links two isomorphic subtrees node-by-node in lockstep.
@@ -157,15 +188,20 @@ fn map_isomorphic_subtree(
     mapping: &mut Mapping,
 ) {
     let mut stack = vec![(source_node, destination_node)];
-    while let Some((src, dst)) = stack.pop() {
-        mapping.link(src, dst);
-        let src_children = &source_tree.node(src).children;
-        let dst_children = &destination_tree.node(dst).children;
-        if src_children.len() == dst_children.len() {
-            // Push in reverse so leftmost pair is processed first.
-            for (s, d) in src_children.iter().zip(dst_children.iter()).rev() {
-                stack.push((*s, *d));
-            }
+    while let Some((current_source, current_destination)) = stack.pop() {
+        mapping.link(current_source, current_destination);
+        let source_children = &source_tree.node(current_source).children;
+        let destination_children = &destination_tree.node(current_destination).children;
+        if source_children.len() != destination_children.len() {
+            continue;
+        }
+        // Push in reverse so leftmost pair is processed first.
+        for (source_child, destination_child) in source_children
+            .iter()
+            .zip(destination_children.iter())
+            .rev()
+        {
+            stack.push((*source_child, *destination_child));
         }
     }
 }
@@ -177,15 +213,14 @@ fn parent_dice(
     destination_node: NodeId,
     mapping: &Mapping,
 ) -> f64 {
-    match (
-        source_tree.node(source_node).parent,
-        destination_tree.node(destination_node).parent,
-    ) {
-        (Some(source_parent), Some(destination_parent)) => dice_coefficient(
+    let source_parent = source_tree.node(source_node).parent;
+    let destination_parent = destination_tree.node(destination_node).parent;
+    match (source_parent, destination_parent) {
+        (Some(source_parent_id), Some(destination_parent_id)) => dice_coefficient(
             source_tree,
-            source_parent,
+            source_parent_id,
             destination_tree,
-            destination_parent,
+            destination_parent_id,
             mapping,
         ),
         _ => 0.0,
@@ -209,18 +244,19 @@ pub fn dice_coefficient(
         .descendants(destination_node)
         .into_iter()
         .collect();
+
     if source_descendants.is_empty() && destination_descendants.is_empty() {
         return 0.0;
     }
-    let mut common = 0usize;
-    for descendant in &source_descendants {
-        if let Some(mapped_destination) = mapping.get_dst(*descendant) {
-            if destination_descendants.contains(&mapped_destination) {
-                common += 1;
-            }
-        }
-    }
-    2.0 * (common as f64) / ((source_descendants.len() + destination_descendants.len()) as f64)
+
+    let common = source_descendants
+        .iter()
+        .filter_map(|descendant| mapping.get_dst(*descendant))
+        .filter(|mapped_destination| destination_descendants.contains(mapped_destination))
+        .count();
+
+    let total = source_descendants.len() + destination_descendants.len();
+    2.0 * (common as f64) / (total as f64)
 }
 
 /// Priority queue keyed by node height, with max-heap behaviour.
@@ -245,9 +281,8 @@ impl HeightPQ {
     }
 
     fn pop_max(&mut self) -> Vec<NodeId> {
-        let max_height = match self.peek_height() {
-            Some(height) => height,
-            None => return Vec::new(),
+        let Some(max_height) = self.peek_height() else {
+            return Vec::new();
         };
         self.buckets.remove(&max_height).unwrap_or_default()
     }
@@ -287,13 +322,11 @@ mod tests {
             &mut mapping,
             DEFAULT_MIN_HEIGHT,
         );
-        // Top-down should map at least the root subtree (height 3).
         assert!(mapping.has_src(source_tree.root()));
         assert_eq!(
             mapping.get_dst(source_tree.root()),
             Some(destination_tree.root())
         );
-        // Since hashes match for the whole tree, every node should be mapped.
         assert_eq!(mapping.len(), source_tree.node_count());
     }
 
@@ -321,9 +354,6 @@ mod tests {
 
     #[test]
     fn shared_subtree_is_anchored() {
-        // T1 and T2 share a deep subtree S of height 3 (above min_height=2),
-        // but otherwise differ. Top-down should anchor S in both trees.
-        // Shared subtree: (sub (mid (x 1)))
         let mut source_builder = TreeBuilder::new();
         let source_root = source_builder.add("root", "", None, 0, 0);
         let source_sub = source_builder.add("sub", "", Some(source_root), 0, 0);
@@ -350,14 +380,11 @@ mod tests {
             DEFAULT_MIN_HEIGHT,
         );
 
-        // The shared `sub` subtree should be anchored.
         assert_eq!(mapping.get_dst(source_sub), Some(destination_sub));
     }
 
     #[test]
     fn min_height_threshold_excludes_small_subtrees() {
-        // The only shared subtree is at height 2; with min_height=2 (i.e.
-        // strictly greater than 2), top-down should not match it.
         let mut source_builder = TreeBuilder::new();
         let source_root = source_builder.add("root", "", None, 0, 0);
         let small_subtree = source_builder.add("small", "", Some(source_root), 0, 0);
@@ -365,21 +392,18 @@ mod tests {
         let source_tree = source_builder.build(source_root);
 
         let mut destination_builder = TreeBuilder::new();
-        let destination_root = destination_builder.add("Root", "", None, 0, 0); // different kind so roots don't iso
+        let destination_root = destination_builder.add("Root", "", None, 0, 0);
         let small_subtree_dest = destination_builder.add("small", "", Some(destination_root), 0, 0);
         let _ = destination_builder.add("leaf", "v", Some(small_subtree_dest), 0, 0);
         let destination_tree = destination_builder.build(destination_root);
 
         let mut mapping = Mapping::new();
         match_top_down(&source_tree, &destination_tree, &mut mapping, 2);
-        // small is height 2, threshold strict (max_height <= min_height stops).
         assert!(!mapping.has_src(small_subtree));
     }
 
     #[test]
     fn lowering_min_height_unlocks_smaller_subtrees() {
-        // Same setup, but with min_height=1 the matcher should now anchor the
-        // height-2 `small` subtree.
         let mut source_builder = TreeBuilder::new();
         let source_root = source_builder.add("root", "", None, 0, 0);
         let small_subtree = source_builder.add("small", "", Some(source_root), 0, 0);
@@ -399,7 +423,6 @@ mod tests {
 
     #[test]
     fn maps_only_unique_isomorphic_anchors_directly() {
-        // T1 and T2 contain a unique large subtree S.
         let mut source_builder = TreeBuilder::new();
         let source_root = source_builder.add("root", "", None, 0, 0);
         let source_subtree = source_builder.add("S", "", Some(source_root), 0, 0);
@@ -447,14 +470,13 @@ mod tests {
         let source_tree = small_tree("x", "y");
         let destination_tree = small_tree("x", "y");
         let mut mapping = Mapping::new();
-        // Manually pair every descendant.
         let source_descendants = source_tree.descendants(source_tree.root());
         let destination_descendants = destination_tree.descendants(destination_tree.root());
-        for (source, destination) in source_descendants
+        for (source_node, destination_node) in source_descendants
             .iter()
             .zip(destination_descendants.iter())
         {
-            mapping.link(*source, *destination);
+            mapping.link(*source_node, *destination_node);
         }
         let dice = dice_coefficient(
             &source_tree,
