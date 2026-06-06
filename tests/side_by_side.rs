@@ -53,7 +53,8 @@ fn parse_rows(output: &str) -> Vec<(Option<usize>, String, Option<usize>, String
         .lines()
         .filter(|line| line.contains('│'))
         .map(|line| {
-            let parts: Vec<&str> = line.split('│').collect();
+            let clean = strip_ansi(line);
+            let parts: Vec<&str> = clean.split('│').collect();
             if parts.len() < 4 {
                 return (None, String::new(), None, String::new());
             }
