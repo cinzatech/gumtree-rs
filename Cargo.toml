@@ -1,8 +1,8 @@
 [package]
-name = "gumtree-rs"
+name = "diffame"
 version = "0.1.0"
 edition = "2021"
-description = "A Rust implementation of the SimpleGumTree AST differencing algorithm"
+description = "A structural diff tool that understands your code"
 
 [dependencies]
 colored = "2"
@@ -71,7 +71,7 @@ tree-sitter-yaml = "0.7"
 tree-sitter-zig = "1.1"
 
 [[bin]]
-name = "gumtree-rs"
+name = "diffame"
 path = "src/main.rs"
 
 [profile.release]

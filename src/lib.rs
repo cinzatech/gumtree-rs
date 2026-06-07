@@ -1,9 +1,8 @@
-//! GumTree-style AST differencing in Rust.
+//! Structural code differencing powered by tree-sitter.
 //!
 //! Implements the SimpleGumTree matcher (Falleri & Martinez, ICSE 2024) on top
 //! of [tree-sitter](https://tree-sitter.github.io) parsers, plus a Chawathe
-//! edit-script generator and a JSON formatter compatible with the upstream
-//! Java tool's `-f JSON` output.
+//! edit-script generator and multiple output formatters.
 
 pub mod actions;
 pub mod language;

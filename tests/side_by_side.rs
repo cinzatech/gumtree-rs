@@ -6,9 +6,9 @@
 
 use std::collections::HashSet;
 
-use gumtree_rs::languages;
-use gumtree_rs::side_by_side::format_side_by_side;
-use gumtree_rs::{diff_sources, DiffOptions};
+use diffame::languages;
+use diffame::side_by_side::format_side_by_side;
+use diffame::{diff_sources, DiffOptions};
 
 /// Helper: diff two Python snippets and return the side-by-side output with
 /// ANSI colors stripped.

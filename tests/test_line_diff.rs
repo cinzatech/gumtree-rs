@@ -1,5 +1,5 @@
-use gumtree_rs::line_tree::build_line_tree;
-use gumtree_rs::matcher::line_diff::match_lines;
+use diffame::line_tree::build_line_tree;
+use diffame::matcher::line_diff::match_lines;
 
 #[test]
 fn identical_files_map_all_lines() {

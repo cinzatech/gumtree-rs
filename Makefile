@@ -1,7 +1,7 @@
 CARGO   ?= cargo
 PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
-BIN     := gumtree-rs
+BIN     := diffame
 
 RELEASE_BIN = target/release/$(BIN)
 

@@ -3,9 +3,9 @@
 //! These tests build trees with [`TreeBuilder`] (no tree-sitter required) and
 //! verify the resulting diff makes sense at the level of mappings and actions.
 
-use gumtree_rs::actions::Action;
-use gumtree_rs::tree::{NodeId, Tree, TreeBuilder};
-use gumtree_rs::{diff_trees, DiffOptions};
+use diffame::actions::Action;
+use diffame::tree::{NodeId, Tree, TreeBuilder};
+use diffame::{diff_trees, DiffOptions};
 
 /// Quick-and-dirty tree builder for tests, accepting a sequence of
 /// `(kind, label, parent_index, start, end)` where parent_index is the index
@@ -252,7 +252,7 @@ fn json_output_round_trip_has_correct_structure() {
     let (source_tree, _) = make(&[("root", "", -1, 0, 10), ("leaf", "x", 0, 1, 2)]);
     let (destination_tree, _) = make(&[("root", "", -1, 0, 10), ("leaf", "y", 0, 1, 2)]);
     let result = diff_trees(source_tree, destination_tree, &DiffOptions::default());
-    let json = gumtree_rs::format::to_json(
+    let json = diffame::format::to_json(
         &result.src_tree,
         &result.dst_tree,
         &result.mapping,
@@ -282,7 +282,7 @@ fn options_threshold_can_be_overridden() {
     ]);
 
     let strict = DiffOptions {
-        match_options: gumtree_rs::matcher::MatchOptions {
+        match_options: diffame::matcher::MatchOptions {
             min_height: 5,
             ..Default::default()
         },
@@ -302,8 +302,8 @@ fn options_threshold_can_be_overridden() {
 // ---------------------------------------------------------------------------
 
 mod line_diff {
-    use gumtree_rs::actions::Action;
-    use gumtree_rs::{diff_lines, DiffOptions};
+    use diffame::actions::Action;
+    use diffame::{diff_lines, DiffOptions};
 
     #[test]
     fn identical_files_produce_no_actions() {
@@ -444,7 +444,7 @@ mod line_diff {
         let old = b"aaa\nbbb\n";
         let new = b"aaa\nccc\n";
         let result = diff_lines(old, new, &DiffOptions::default()).unwrap();
-        let json = gumtree_rs::format::to_json(
+        let json = diffame::format::to_json(
             &result.src_tree,
             &result.dst_tree,
             &result.mapping,

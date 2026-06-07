@@ -1,4 +1,4 @@
-use gumtree_rs::tree::{Tree, TreeBuilder};
+use diffame::tree::{Tree, TreeBuilder};
 
 /// Helper: build (a (b 1) (c 2)).
 fn sample_tree() -> Tree {

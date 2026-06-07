@@ -1,7 +1,7 @@
-use gumtree_rs::actions::Action;
-use gumtree_rs::format::{format_node, to_json};
-use gumtree_rs::mapping::Mapping;
-use gumtree_rs::tree::{Tree, TreeBuilder};
+use diffame::actions::Action;
+use diffame::format::{format_node, to_json};
+use diffame::mapping::Mapping;
+use diffame::tree::{Tree, TreeBuilder};
 
 fn one_node(kind: &str, label: &str) -> Tree {
     let mut builder = TreeBuilder::new();

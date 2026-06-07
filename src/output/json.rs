@@ -1,4 +1,4 @@
-//! JSON output format compatible with GumTree's `-f JSON`.
+//! JSON output format for diff results.
 
 use serde::Serialize;
 
@@ -47,7 +47,7 @@ impl DiffFormatter for JsonFormatter {
     }
 }
 
-/// Serialises the full diff result to a JSON string mirroring GumTree's `-f JSON`
+/// Serialises the full diff result to a JSON string.
 /// output: `{"matches": [...], "actions": [...]}`.
 pub fn to_json(
     source_tree: &Tree,

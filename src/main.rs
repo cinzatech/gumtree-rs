@@ -1,7 +1,11 @@
-//! `gumtree-rs` command-line tool.
+//! `diffame` command-line tool.
 //!
 //! Usage:
-//!     gumtree-rs <old> <new> [-f JSON|TEXT|SIDE] [-l EXT]
+//!     diffame <old> <new> [-f JSON|TEXT|SIDE] [-l EXT]
+//!
+//! When invoked by git as `diff.external`, diffame also accepts the 7-argument
+//! form that git passes:
+//!     diffame path old-file old-hex old-mode new-file new-hex new-mode
 //!
 //! The language is auto-detected from the file extension unless `-l` is given.
 
@@ -10,11 +14,11 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use gumtree_rs::output::json::JsonFormatter;
-use gumtree_rs::output::terminal::TerminalFormatter;
-use gumtree_rs::output::text::TextFormatter;
-use gumtree_rs::output::{DiffFormatter, FormatInput};
-use gumtree_rs::{diff_lines, diff_sources, languages, DiffOptions};
+use diffame::output::json::JsonFormatter;
+use diffame::output::terminal::TerminalFormatter;
+use diffame::output::text::TextFormatter;
+use diffame::output::{DiffFormatter, FormatInput};
+use diffame::{diff_lines, diff_sources, languages, DiffOptions};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -28,7 +32,7 @@ fn main() -> ExitCode {
     while arg_index < args.len() {
         match args[arg_index].as_str() {
             "-h" | "--help" => {
-                print_usage(args.first().map(String::as_str).unwrap_or("gumtree-rs"));
+                print_usage(args.first().map(String::as_str).unwrap_or("diffame"));
                 return ExitCode::SUCCESS;
             }
             "-f" if arg_index + 1 < args.len() => {
@@ -67,16 +71,24 @@ fn main() -> ExitCode {
         }
     }
 
-    if positional.len() != 2 {
-        print_usage(args.first().map(String::as_str).unwrap_or("gumtree-rs"));
-        return ExitCode::from(2);
-    }
-    let old_path = positional[0];
-    let new_path = positional[1];
+    // Resolve old_path, new_path, and the path used for language detection.
+    //
+    // Two accepted forms:
+    //   diffame <old> <new>                                       (direct)
+    //   diffame <path> <old-file> <old-hex> <old-mode>            (git diff.external)
+    //           <new-file> <new-hex> <new-mode>
+    let (old_path, new_path, lang_path): (&str, &str, &str) = match positional.len() {
+        2 => (positional[0], positional[1], positional[0]),
+        7 => (positional[1], positional[4], positional[0]),
+        _ => {
+            print_usage(args.first().map(String::as_str).unwrap_or("diffame"));
+            return ExitCode::from(2);
+        }
+    };
 
     // Determine the language extension to use.
     let ext = lang_override.unwrap_or_else(|| {
-        Path::new(old_path)
+        Path::new(lang_path)
             .extension()
             .and_then(|ext_os_str| ext_os_str.to_str())
             .unwrap_or("")
@@ -85,7 +97,7 @@ fn main() -> ExitCode {
 
     // Try extension first, then fall back to filename (for Dockerfile, Makefile, etc.).
     let profile = languages::profile_for_ext(&ext).or_else(|| {
-        let filename = Path::new(old_path)
+        let filename = Path::new(lang_path)
             .file_name()
             .and_then(|name_os_str| name_os_str.to_str())
             .unwrap_or("");
@@ -152,6 +164,8 @@ fn print_usage(progname: &str) {
         "usage: {} <old-file> <new-file> [-f JSON|TEXT|SIDE] [-l EXT]",
         progname
     );
+    eprintln!();
+    eprintln!("  Also accepts git's 7-argument diff.external invocation.");
     eprintln!();
     eprintln!("  -f FORMAT          output format: TEXT (default), JSON, or SIDE");
     eprintln!("  -l EXT             override language (e.g. rs, py, js)");

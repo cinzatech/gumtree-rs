@@ -1,9 +1,9 @@
-use gumtree_rs::mapping::Mapping;
-use gumtree_rs::matcher::bottomup::{
+use diffame::mapping::Mapping;
+use diffame::matcher::bottomup::{
     match_bottom_up, recover_simple, DEFAULT_MAX_SIZE, DEFAULT_MIN_DICE,
 };
-use gumtree_rs::matcher::topdown::{match_top_down, DEFAULT_MIN_HEIGHT};
-use gumtree_rs::tree::{NodeId, Tree, TreeBuilder};
+use diffame::matcher::topdown::{match_top_down, DEFAULT_MIN_HEIGHT};
+use diffame::tree::{NodeId, Tree, TreeBuilder};
 
 /// Builds two trees that share a tall stable subtree (so top-down can
 /// anchor on it) plus a section with one label change for bottom-up

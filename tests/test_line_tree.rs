@@ -1,4 +1,4 @@
-use gumtree_rs::line_tree::build_line_tree;
+use diffame::line_tree::build_line_tree;
 
 #[test]
 fn empty_input_produces_root_only() {

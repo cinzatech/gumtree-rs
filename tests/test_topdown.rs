@@ -1,6 +1,6 @@
-use gumtree_rs::mapping::Mapping;
-use gumtree_rs::matcher::topdown::{dice_coefficient, match_top_down, DEFAULT_MIN_HEIGHT};
-use gumtree_rs::tree::{Tree, TreeBuilder};
+use diffame::mapping::Mapping;
+use diffame::matcher::topdown::{dice_coefficient, match_top_down, DEFAULT_MIN_HEIGHT};
+use diffame::tree::{Tree, TreeBuilder};
 
 /// Builds (r (a x) (b y)) where leaves carry labels x and y.
 fn small_tree(left_label: &str, right_label: &str) -> Tree {

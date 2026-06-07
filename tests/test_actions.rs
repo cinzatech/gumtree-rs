@@ -1,8 +1,8 @@
-use gumtree_rs::actions::{generate_actions, Action};
-use gumtree_rs::mapping::Mapping;
-use gumtree_rs::matcher::{match_trees, MatchOptions};
-use gumtree_rs::tree::Tree;
-use gumtree_rs::tree::TreeBuilder;
+use diffame::actions::{generate_actions, Action};
+use diffame::mapping::Mapping;
+use diffame::matcher::{match_trees, MatchOptions};
+use diffame::tree::Tree;
+use diffame::tree::TreeBuilder;
 
 fn diff(source_tree: &Tree, destination_tree: &Tree) -> (Mapping, Vec<Action>) {
     let mapping = match_trees(source_tree, destination_tree, MatchOptions::default());

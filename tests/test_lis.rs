@@ -1,4 +1,4 @@
-use gumtree_rs::lis::longest_increasing_subsequence;
+use diffame::lis::longest_increasing_subsequence;
 
 #[test]
 fn finds_increasing_indices() {

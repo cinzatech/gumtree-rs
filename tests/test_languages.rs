@@ -1,4 +1,4 @@
-use gumtree_rs::languages::{profile_for_ext, profile_for_filename, supported_extensions};
+use diffame::languages::{profile_for_ext, profile_for_filename, supported_extensions};
 
 #[test]
 fn every_supported_extension_resolves_to_a_profile() {

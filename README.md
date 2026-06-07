@@ -1,88 +1,108 @@
-# gumtree-rs
+# diffame
 
-A Rust implementation of the **SimpleGumTree** AST differencing algorithm
-(Falleri & Martinez, ICSE 2024), built on top of
-[tree-sitter](https://tree-sitter.github.io) parsers.
+**A diff tool that understands your code.**
 
-## Installation
+Most diff tools compare files line by line. `diffame` parses your code into an
+AST with [tree-sitter](https://tree-sitter.github.io), matches nodes
+structurally, and produces a minimal edit script that tells you *what changed*,
+not *which lines*.
 
-Requires a working Rust toolchain (`rustup`, `cargo`).
+Move a function 200 lines down? One `move-tree` action instead of walls of
+red and green. Rename a variable? A single `update-node`, instead of a scattered
+shotgun blast across the file.
 
-```bash
-make
-sudo make install      # installs to /usr/local/bin
-```
-
-Override the prefix with `PREFIX=/opt/mydir make install`.
-Uninstall with `sudo make uninstall`.
-
-## Usage
+## Install
 
 ```bash
-gumtree-rs old.rs new.rs              # human-readable text output
-gumtree-rs old.rs new.rs -f JSON      # machine-readable JSON
-gumtree-rs old.py new.py -l py        # explicit language override
+cargo install --path .
 ```
 
-The language is auto-detected from the file extension. For extensionless
-files like `Dockerfile` and `Makefile`, detection falls back to the
-filename. Use `-l EXT` to override when auto-detection fails.
+Or with `make`:
 
-### JSON output schema
-
-```json
-{
-  "matches": [
-    {"src": "Kind: label [start,end]", "dest": "Kind: label [start,end]"}
-  ],
-  "actions": [
-    {"action": "move-tree", "tree": "...", "parent": "...", "at": 2},
-    {"action": "update-node", "tree": "...", "label": "new value"}
-  ]
-}
+```bash
+make build
+sudo make install
 ```
 
-## Algorithm
+## Quick start
 
-Three stages, each implemented in its own module:
+```bash
+diffame old.rs new.rs                   # side-by-side terminal output
+diffame old.py new.py -f TEXT           # compact text summary
+diffame config.json data.json -f JSON   # machine-readable JSON
+```
 
-1. **`tree` + `ts_convert`**: parse the source with tree-sitter, filter
-   anonymous tokens, build an arena-backed internal AST with cached `height`,
-   `size`, and a Merkle-style structural `hash`.
-2. **`matcher`**: two-phase node matching:
-   - `matcher::topdown`: greedy height-ordered anchor matching of isomorphic
-     subtrees, with parent-dice tie-breaking for ambiguous candidates.
-   - `matcher::bottomup`: for each remaining unmapped node whose descendants
-     already anchor, find the best container in T2 by Dice similarity, then
-     run the cheap *simple recovery* (kind+label histogram, then parent-
-     correspondence) inside the matched pair.
-3. **`actions`**: Chawathe edit-script generator producing the six action
-   types `insert-tree`, `insert-node`, `delete-tree`, `delete-node`,
-   `update-node`, `move-tree`, including an LIS-based alignment pass for
-   sibling reorderings.
+Language is auto-detected from the file extension. For extensionless files
+(`Dockerfile`, `Makefile`, …) detection falls back to the filename. Use `-l`
+to override:
+
+```bash
+diffame a.txt b.txt -l py              # treat as Python
+```
+
+## Use as `git diff`
+
+Drop `diffame` in as your external diff driver and get structural diffs
+everywhere git shows you a diff:
+
+```bash
+git config --global diff.external diffame
+```
+
+That's it. `git diff`, `git show`, `git log -p` — all structural now.
+
+To use it selectively:
+
+```bash
+GIT_EXTERNAL_DIFF=diffame git diff
+```
+
+## Supported languages
+
+60+ languages out of the box, including C, C++, C#, CSS, Dart, Elixir,
+Elm, Erlang, Fortran, GDScript, GLSL, Go, GraphQL, Groovy, Haskell, HCL,
+HTML, Java, JavaScript, JSON, Julia, Kotlin, LaTeX, Lua, Makefile, Markdown,
+Nix, Objective-C, OCaml, Pascal, Perl, PHP, PowerShell, Prolog, Protocol
+Buffers, Python, R, Racket, Ruby, Rust, Scala, Scheme, Solidity, SQL, Swift,
+TOML, TypeScript, Verilog, XML, YAML, Zig, and more.
+
+Files with unrecognised extensions gracefully fall back to line-level
+diffing, `diffame` never refuses work.
+
+## Output formats
+
+| Flag      | Description |
+|-----------|-------------|
+| `-f SIDE` | Side-by-side coloured terminal output *(default)* |
+| `-f TEXT` | Compact text summary of actions |
+| `-f JSON` | Machine-readable JSON with full match and action data |
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `-l EXT` | Override language detection (e.g. `rs`, `py`, `js`) |
+| `--max-file-size N` | Max input size in bytes (default: 100 MB, `0` = unlimited) |
+| `--parse-timeout N` | Parser timeout in seconds (default: 60, `0` = unlimited) |
+
+## How it works
+
+`diffame` implements the SimpleGumTree algorithm (Falleri & Martinez, ICSE 2024)
+in three phases:
+
+1. **Parse**: tree-sitter builds a concrete syntax tree for each file.
+2. **Match**: a top-down pass anchors identical subtrees; a bottom-up pass
+   recovers container-level matches via Dice similarity.
+3. **Edit script**: a Chawathe-style generator emits the minimal set of
+   `insert`, `delete`, `update`, and `move` actions.
 
 ## Development
 
 ```bash
-make check    # fmt + clippy + tests
-make test     # tests only
+make check       # fmt + clippy + tests
+make test        # tests only
 ```
 
-Unit tests live alongside each module; behavioural end-to-end tests in
-`tests/diff_e2e.rs` construct trees through `TreeBuilder` so they don't
-require a grammar.
+## License
 
-## Known divergences from Java GumTree
-
-- **Node `kind` strings differ.** GumTree's Java output uses names like
-  `YamlTuple`, `YamlHash`; tree-sitter grammars use names like
-  `block_mapping_pair`, `block_mapping`. Output is structurally identical
-  but lexically different.
-- **Position semantics for moves and inserts.** We emit `at` as the final
-  index in T2. The Java tool tracks positions dynamically as actions are
-  applied; this can change the value of `at` for any single action without
-  changing the overall result.
-- **No exhaustive optimal recovery.** The "Simple" in SimpleGumTree is exactly
-  this trade-off: replace Zhang-Shasha tree-edit-distance with a cheap greedy
-  histogram, accepting slightly different (and on average smaller) edit
-  scripts.
+See [LICENSE.md](LICENSE.md).

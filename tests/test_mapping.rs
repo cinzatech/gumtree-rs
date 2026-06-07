@@ -1,4 +1,4 @@
-use gumtree_rs::mapping::Mapping;
+use diffame::mapping::Mapping;
 
 #[test]
 fn new_mapping_is_empty() {

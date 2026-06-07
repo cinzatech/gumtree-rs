@@ -1,4 +1,4 @@
-use gumtree_rs::string_distance::{levenshtein_distance, normalised_similarity};
+use diffame::string_distance::{levenshtein_distance, normalised_similarity};
 
 #[test]
 fn levenshtein_identical_strings() {
