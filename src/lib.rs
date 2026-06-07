@@ -10,9 +10,11 @@ pub mod format;
 pub mod language;
 pub mod languages;
 pub mod line_tree;
+pub mod lis;
 pub mod mapping;
 pub mod matcher;
 pub mod side_by_side;
+pub mod string_distance;
 pub mod tree;
 pub mod ts_convert;
 
