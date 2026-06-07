@@ -6,17 +6,27 @@
 //! Java tool's `-f JSON` output.
 
 pub mod actions;
-pub mod format;
 pub mod language;
 pub mod languages;
 pub mod line_tree;
 pub mod lis;
 pub mod mapping;
 pub mod matcher;
-pub mod side_by_side;
+pub mod output;
 pub mod string_distance;
 pub mod tree;
 pub mod ts_convert;
+
+/// Backward-compatible re-export of the old `format` module surface.
+pub mod format {
+    pub use crate::output::format_node;
+    pub use crate::output::json::to_json;
+}
+
+/// Backward-compatible re-export of the old `side_by_side` module surface.
+pub mod side_by_side {
+    pub use crate::output::terminal::format_side_by_side;
+}
 
 use crate::actions::{generate_actions, Action};
 use crate::language::LanguageProfile;

@@ -10,7 +10,11 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use gumtree_rs::{diff_lines, diff_sources, format::to_json, languages, side_by_side, DiffOptions};
+use gumtree_rs::output::json::JsonFormatter;
+use gumtree_rs::output::terminal::TerminalFormatter;
+use gumtree_rs::output::text::TextFormatter;
+use gumtree_rs::output::{DiffFormatter, FormatInput};
+use gumtree_rs::{diff_lines, diff_sources, languages, DiffOptions};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -123,28 +127,21 @@ fn main() -> ExitCode {
         }
     };
 
+    let input = FormatInput {
+        source_bytes: &old_src,
+        destination_bytes: &new_src,
+        result: &result,
+    };
+
     if format.eq_ignore_ascii_case("JSON") {
-        let json = to_json(
-            &result.src_tree,
-            &result.dst_tree,
-            &result.mapping,
-            &result.actions,
-        );
-        println!("{}", json);
+        let output = JsonFormatter::format(&input);
+        println!("{}", output);
     } else if format.eq_ignore_ascii_case("SIDE") {
-        let output = side_by_side::format_side_by_side(
-            &old_src,
-            &new_src,
-            &result.src_tree,
-            &result.dst_tree,
-            &result.mapping,
-            &result.actions,
-        );
+        let output = TerminalFormatter::format(&input);
         print!("{}", output);
     } else {
-        for action in &result.actions {
-            println!("{:?}", action);
-        }
+        let output = TextFormatter::format(&input);
+        print!("{}", output);
     }
 
     ExitCode::SUCCESS

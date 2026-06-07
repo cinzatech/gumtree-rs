@@ -1,25 +1,12 @@
-//! Formatting utilities: GumTree-style node strings and JSON output.
-//!
-//! The node string uses GumTree's `Kind: label [start,end]` (or `Kind [start,end]`
-//! when label is empty) so consumers familiar with the Java output can read it.
+//! JSON output format compatible with GumTree's `-f JSON`.
 
 use serde::Serialize;
 
 use crate::actions::Action;
 use crate::mapping::Mapping;
-use crate::tree::{Node, Tree};
+use crate::tree::Tree;
 
-/// Returns the GumTree-style display string for a node.
-pub fn format_node(node: &Node) -> String {
-    if node.label.is_empty() {
-        format!("{} [{},{}]", node.kind, node.start_byte, node.end_byte)
-    } else {
-        format!(
-            "{}: {} [{},{}]",
-            node.kind, node.label, node.start_byte, node.end_byte
-        )
-    }
-}
+use super::{format_node, DiffFormatter, FormatInput};
 
 // ----- Serializable output types -----
 
@@ -45,6 +32,19 @@ struct ActionEntry {
     at: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
+}
+
+pub struct JsonFormatter;
+
+impl DiffFormatter for JsonFormatter {
+    fn format(input: &FormatInput) -> String {
+        to_json(
+            &input.result.src_tree,
+            &input.result.dst_tree,
+            &input.result.mapping,
+            &input.result.actions,
+        )
+    }
 }
 
 /// Serialises the full diff result to a JSON string mirroring GumTree's `-f JSON`
