@@ -4,7 +4,7 @@
 //! All wiring lives in the [`define_languages!`] invocation at the bottom of
 //! this file.  To add a new language: add one `simple_profile!` line and one
 //! entry in the macro table.  Both `profile_for_ext` and
-//! `supported_extensions` are generated automatically — there is no second
+//! `supported_extensions` are generated automatically, there is no second
 //! list to keep in sync.
 
 use tree_sitter::Language;

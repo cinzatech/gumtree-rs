@@ -133,7 +133,7 @@ fn pure_deletion_emits_delete_tree_not_per_node() {
 #[test]
 fn move_to_new_parent_emits_move_tree() {
     // T1: (root (a (item v)) (b))
-    // T2: (root (a)          (b (item v)))   — `item` moved from a to b
+    // T2: (root (a)          (b (item v)))     `item` moved from a to b
     let (source_tree, _source_ids) = make(&[
         ("root", "", -1, 0, 30),
         ("a", "", 0, 0, 15),
@@ -338,7 +338,7 @@ mod line_diff {
         };
         assert_eq!(inserted_label, "bbb");
 
-        // No deletes — the old lines are still present.
+        // No deletes, the old lines are still present.
         let deletes = result
             .actions
             .iter()
@@ -453,7 +453,7 @@ mod line_diff {
 
         assert!(json.contains("\"matches\""), "missing matches key");
         assert!(json.contains("\"actions\""), "missing actions key");
-        // The standard action names should appear — not any line-diff-specific ones.
+        // The standard action names should appear, not any line-diff-specific ones.
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let actions = parsed["actions"].as_array().unwrap();
         for action in actions {
@@ -508,7 +508,7 @@ mod line_diff {
             result.actions
         );
 
-        // No inserts or deletes — both lines are still present, just reordered.
+        // No inserts or deletes, both lines are still present, just reordered.
         let inserts = result
             .actions
             .iter()
@@ -582,7 +582,7 @@ mod line_diff {
             result.actions
         );
 
-        // No inserts or deletes — everything is accounted for by moves and updates.
+        // No inserts or deletes, everything is accounted for by moves and updates.
         assert!(
             !action_kinds.contains("insert-tree") && !action_kinds.contains("insert-node"),
             "unexpected inserts: {:?}",

@@ -127,7 +127,7 @@ fn sibling_reorder_emits_move_tree() {
     let _ = builder.add("leaf", "2", Some(branch_b), 0, 0);
     let source_tree = builder.build(root_id);
 
-    // T2: (root (b 2) (a 1)) — swapped order
+    // T2: (root (b 2) (a 1))   swapped order
     let mut builder = TreeBuilder::new();
     let root_id = builder.add("root", "", None, 0, 0);
     let branch_b = builder.add("b", "", Some(root_id), 0, 0);

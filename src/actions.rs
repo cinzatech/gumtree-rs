@@ -3,10 +3,10 @@
 //! Given a mapping `M : T1 → T2`, produces a list of [`Action`]s describing
 //! how to transform `T1` into `T2`:
 //!
-//! * **insert-tree / insert-node** — destination nodes with no source counterpart.
-//! * **delete-tree / delete-node** — source nodes with no destination counterpart.
-//! * **update-node** — same node but different label.
-//! * **move-tree** — mapped node whose parent changed, or whose siblings reordered.
+//! * **insert-tree / insert-node**: destination nodes with no source counterpart.
+//! * **delete-tree / delete-node**: source nodes with no destination counterpart.
+//! * **update-node**: same node but different label.
+//! * **move-tree**: mapped node whose parent changed, or whose siblings reordered.
 //!
 //! The algorithm walks T2 in BFS order to emit inserts/updates/moves, then runs
 //! an alignment pass over each mapped (w, x) pair to catch sibling reorderings,
@@ -76,7 +76,7 @@ pub fn generate_actions(
     let mut actions: Vec<Action> = Vec::new();
     let mut covered_by_insert_tree: HashSet<NodeId> = HashSet::new();
 
-    // Phase 1: BFS over T2 — emit inserts / updates / moves.
+    // Phase 1: BFS over T2, emit inserts / updates / moves.
     let bfs = destination_tree.bfs_order(destination_tree.root());
     for destination_node in bfs {
         if destination_node == destination_tree.root() {
@@ -143,7 +143,7 @@ pub fn generate_actions(
         }
     }
 
-    // Phase 2: alignment — within mapped (w, x), order mapped children to match T2.
+    // Phase 2: alignment, within mapped (w, x), order mapped children to match T2.
     for (source_node, destination_node) in mapping.pairs() {
         align_children(
             source_tree,
@@ -156,7 +156,7 @@ pub fn generate_actions(
     }
     actions = dedup_moves(actions);
 
-    // Phase 3: pre-order over T1 — emit deletes, collapsing to delete-tree where possible.
+    // Phase 3: pre-order over T1, emit deletes, collapsing to delete-tree where possible.
     let mut covered_by_delete_tree: HashSet<NodeId> = HashSet::new();
     let pre_order = source_tree.pre_order(source_tree.root());
     for source_node in pre_order {

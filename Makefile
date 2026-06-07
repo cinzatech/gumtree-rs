@@ -24,7 +24,7 @@ build:
 	$(CARGO) build --release
 
 install:
-	@test -f $(RELEASE_BIN) || { echo "error: $(RELEASE_BIN) not found — run 'make build' first"; exit 1; }
+	@test -f $(RELEASE_BIN) || { echo "error: $(RELEASE_BIN) not found, run 'make build' first"; exit 1; }
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 755 $(RELEASE_BIN) $(DESTDIR)$(BINDIR)/$(BIN)
 

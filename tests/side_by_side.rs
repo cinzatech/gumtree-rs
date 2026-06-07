@@ -185,7 +185,7 @@ fn updated_line_colors_only_changed_tokens() {
 
 /// Issue 3: A function that kept its relative position among its peers should
 /// NOT have cyan (moved) line numbers. `unused` stayed after `add` in both
-/// files — it was not reordered.
+/// files, it was not reordered.
 #[test]
 fn non_reordered_function_is_not_marked_as_moved() {
     let output = side_by_side_colored(FUNC_OLD, FUNC_NEW);

@@ -2,12 +2,12 @@
 //!
 //! Colors are applied per AST span, not per line:
 //!
-//! * **Cyan** line numbers — the line belongs to a moved block.
-//! * **Red** spans on the left — deleted tokens.
-//! * **Green** spans on the right — inserted tokens.
-//! * **Yellow** spans on both sides — updated (label-changed) tokens.
-//! * Default — unchanged tokens and inter-token whitespace.
-//! * `░` — filler for absent lines with no counterpart on the other side.
+//! * **Cyan** line numbers: the line belongs to a moved block.
+//! * **Red** spans on the left: deleted tokens.
+//! * **Green** spans on the right: inserted tokens.
+//! * **Yellow** spans on both sides: updated (label-changed) tokens.
+//! * Default: unchanged tokens and inter-token whitespace.
+//! * `•`: filler for absent lines with no counterpart on the other side.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -22,7 +22,7 @@ use super::line_pairing::{build_line_pairing, split_into_lines, FileLine};
 use super::{DiffFormatter, FormatInput};
 
 /// The fill character used when a line has no counterpart on the other side.
-const ABSENT_FILL: char = '░';
+const ABSENT_FILL: char = '•';
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SpanColor {
@@ -296,7 +296,7 @@ fn render_spans(spans: &[ColoredSpan]) -> String {
         .collect()
 }
 
-/// Builds a dimmed fill string of `░` characters to occupy `width` columns.
+/// Builds a dimmed fill string of `•` characters to occupy `width` columns.
 fn absent_fill(width: usize) -> String {
     let fill: String = std::iter::repeat_n(ABSENT_FILL, width).collect();
     fill.dimmed().to_string()
@@ -328,15 +328,15 @@ fn render_row(
         right_number_raw.dimmed().to_string()
     };
 
-    // Left content: real spans or ░ fill when absent.
+    // Left content: real spans or • fill when absent.
     let (left_padded, right_content) = if row.source_line_number.is_none() {
-        // No source line — fill the left side with ░.
+        // No source line, fill the left side with •.
         (
             absent_fill(content_width),
             render_spans(&row.destination_spans),
         )
     } else if row.destination_line_number.is_none() {
-        // No destination line — fill the right side with ░.
+        // No destination line, fill the right side with •.
         let left_rendered = render_spans(&row.source_spans);
         let padding = content_width.saturating_sub(row.source_plain_len());
         (

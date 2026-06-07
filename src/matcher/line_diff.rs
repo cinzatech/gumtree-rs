@@ -1,10 +1,10 @@
 //! Two-phase line matching for language-agnostic diffing.
 //!
-//! **Phase 1 — Exact matching.** Lines with identical content are grouped and
+//! **Phase 1: Exact matching.** Lines with identical content are grouped and
 //! paired by positional proximity, enabling move detection even when lines
 //! change order.
 //!
-//! **Phase 2 — Similarity matching.** Remaining unmatched lines are compared
+//! **Phase 2: Similarity matching.** Remaining unmatched lines are compared
 //! pairwise using normalised edit distance. Pairs above a similarity threshold
 //! are linked, producing `update-node` actions instead of delete+insert.
 

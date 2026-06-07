@@ -46,17 +46,17 @@ filename. Use `-l EXT` to override when auto-detection fails.
 
 Three stages, each implemented in its own module:
 
-1. **`tree` + `ts_convert`** — parse the source with tree-sitter, filter
+1. **`tree` + `ts_convert`**: parse the source with tree-sitter, filter
    anonymous tokens, build an arena-backed internal AST with cached `height`,
    `size`, and a Merkle-style structural `hash`.
-2. **`matcher`** — two-phase node matching:
-   - `matcher::topdown` — greedy height-ordered anchor matching of isomorphic
+2. **`matcher`**: two-phase node matching:
+   - `matcher::topdown`: greedy height-ordered anchor matching of isomorphic
      subtrees, with parent-dice tie-breaking for ambiguous candidates.
-   - `matcher::bottomup` — for each remaining unmapped node whose descendants
+   - `matcher::bottomup`: for each remaining unmapped node whose descendants
      already anchor, find the best container in T2 by Dice similarity, then
      run the cheap *simple recovery* (kind+label histogram, then parent-
      correspondence) inside the matched pair.
-3. **`actions`** — Chawathe edit-script generator producing the six action
+3. **`actions`**: Chawathe edit-script generator producing the six action
    types `insert-tree`, `insert-node`, `delete-tree`, `delete-node`,
    `update-node`, `move-tree`, including an LIS-based alignment pass for
    sibling reorderings.

@@ -142,7 +142,7 @@ pub fn recover_simple(
 }
 
 /// Phase 1a: exact (kind, label) histogram pairing for LEAF nodes only.
-/// Only match when the candidate is unique — common tokens like `def`,
+/// Only match when the candidate is unique, common tokens like `def`,
 /// `(`, `)` have multiple candidates and would pollute Dice scores if
 /// matched arbitrarily.
 fn recover_exact_leaves(
