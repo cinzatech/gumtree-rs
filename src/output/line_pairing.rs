@@ -25,8 +25,27 @@ pub struct LinePairing {
 }
 
 /// Splits a byte buffer into [`FileLine`]s on `\n` boundaries.
-pub fn split_into_lines<'a>(bytes: &'a [u8]) -> Vec<FileLine<'a>> {
-    let text = std::str::from_utf8(bytes).expect("Input must be valid UTF-8");
+///
+/// Uses lossy UTF-8 conversion so that non-UTF-8 input degrades gracefully
+/// (matching `build_line_tree`'s behaviour) instead of panicking.
+pub fn split_into_lines(bytes: &[u8]) -> Vec<FileLine<'_>> {
+    // Safety: we need a &str that lives as long as `bytes`.  For pure-ASCII
+    // and valid-UTF-8 inputs (the overwhelming majority) `from_utf8` succeeds
+    // and we borrow zero-copy.  For the rare invalid case we fall back to
+    // `from_utf8_lossy`, which may allocate — but the returned `Cow` is
+    // converted to an owned `String` whose lifetime we cannot return as a
+    // `&str` tied to `bytes`.  So we leak the allocation into a &'static str.
+    // This only happens for genuinely broken files and the total leaked size
+    // equals the file size, bounded by `max_file_size`.
+    let text: &str = match std::str::from_utf8(bytes) {
+        Ok(valid) => valid,
+        Err(_) => {
+            let owned = String::from_utf8_lossy(bytes).into_owned();
+            // Leak is bounded by max_file_size and only triggers for
+            // non-UTF-8 files — an uncommon edge case.
+            Box::leak(owned.into_boxed_str())
+        }
+    };
     let mut lines = Vec::new();
     let mut offset = 0;
     for line in text.split('\n') {
@@ -140,6 +159,10 @@ fn phase1_vote<'a>(
 }
 
 /// Phase 2: fill gaps by proximity interpolation.
+///
+/// Uses a single forward sweep followed by a backward sweep to fill gaps in
+/// O(n), replacing the previous `while changed` fixed-point loop that was
+/// O(n²) in the worst case.
 fn phase2_interpolate(
     candidates: Vec<(usize, usize, f64)>,
     source_lines: &[FileLine],
@@ -156,51 +179,93 @@ fn phase2_interpolate(
         used_source_lines.insert(source_line);
     }
 
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for destination_line in 0..destination_lines.len() {
-            if result.contains_key(&destination_line) {
-                continue;
+    let dst_count = destination_lines.len();
+    let src_count = source_lines.len();
+
+    // Precompute next_below[d] = nearest initially-mapped destination line
+    // strictly after d, so the forward sweep can look ahead in O(1).
+    let mut next_below: Vec<Option<(usize, usize)>> = vec![None; dst_count];
+    {
+        let mut upcoming: Option<(usize, usize)> = None;
+        for d in (0..dst_count).rev() {
+            next_below[d] = upcoming;
+            if let Some(&s) = result.get(&d) {
+                upcoming = Some((d, s));
             }
-            let above = (0..destination_line)
-                .rev()
-                .find_map(|d| result.get(&d).map(|&s| (d, s)));
-            let below = ((destination_line + 1)..destination_lines.len())
-                .find_map(|d| result.get(&d).map(|&s| (d, s)));
-
-            let inferred_source = match (above, below) {
-                (Some((above_dst, above_src)), Some((_below_dst, below_src)))
-                    if above_src < below_src =>
-                {
-                    let offset = destination_line - above_dst;
-                    let candidate = above_src + offset;
-                    (candidate < below_src && candidate < source_lines.len()).then_some(candidate)
-                }
-                (Some((above_dst, above_src)), _) => {
-                    let offset = destination_line - above_dst;
-                    let candidate = above_src + offset;
-                    (candidate < source_lines.len() && offset <= 1).then_some(candidate)
-                }
-                (None, Some((below_dst, below_src))) => {
-                    let offset = below_dst - destination_line;
-                    (below_src >= offset && offset <= 1).then_some(below_src - offset)
-                }
-                _ => None,
-            };
-
-            let Some(source_line) = inferred_source else {
-                continue;
-            };
-            if used_source_lines.contains(&source_line) {
-                continue;
-            }
-
-            result.insert(destination_line, source_line);
-            used_source_lines.insert(source_line);
-            changed = true;
         }
     }
+
+    // Forward sweep: handles between-anchor interpolation (Case 1) and
+    // forward edge extension (Case 2).  Tracks `last_mapped` incrementally
+    // so each fill chains into the next without rescanning.
+    let mut last_mapped: Option<(usize, usize)> = None;
+    let mut first_mapped: Option<usize> = None;
+    for d in 0..dst_count {
+        if result.contains_key(&d) {
+            if first_mapped.is_none() {
+                first_mapped = Some(d);
+            }
+            last_mapped = Some((d, result[&d]));
+            continue;
+        }
+
+        let above = last_mapped;
+        let below = next_below[d];
+
+        let inferred_source = match (above, below) {
+            (Some((above_dst, above_src)), Some((_below_dst, below_src)))
+                if above_src < below_src =>
+            {
+                let offset = d - above_dst;
+                let candidate = above_src + offset;
+                (candidate < below_src && candidate < src_count).then_some(candidate)
+            }
+            (Some((above_dst, above_src)), _) => {
+                let offset = d - above_dst;
+                let candidate = above_src + offset;
+                (candidate < src_count && offset <= 1).then_some(candidate)
+            }
+            // Case 3 during forward sweep: only for the line immediately
+            // before the first anchor (offset == 1).
+            (None, Some((below_dst, below_src))) => {
+                let offset = below_dst - d;
+                (below_src >= offset && offset <= 1).then_some(below_src - offset)
+            }
+            _ => None,
+        };
+
+        if let Some(source_line) = inferred_source {
+            if !used_source_lines.contains(&source_line) {
+                result.insert(d, source_line);
+                used_source_lines.insert(source_line);
+                last_mapped = Some((d, source_line));
+                if first_mapped.is_none() {
+                    first_mapped = Some(d);
+                }
+            }
+        }
+    }
+
+    // Backward sweep: extends from the earliest mapped line toward the start.
+    // Only lines before the first mapped line lack an "above" anchor, so only
+    // they can benefit from Case 3 (below-only, offset <= 1) chaining.
+    if let Some(first) = first_mapped {
+        let mut next_anchor: Option<(usize, usize)> = Some((first, result[&first]));
+        for d in (0..first).rev() {
+            if let Some((below_dst, below_src)) = next_anchor {
+                let offset = below_dst - d;
+                if below_src >= offset && offset <= 1 {
+                    let candidate = below_src - offset;
+                    if !used_source_lines.contains(&candidate) {
+                        result.insert(d, candidate);
+                        used_source_lines.insert(candidate);
+                        next_anchor = Some((d, candidate));
+                    }
+                }
+            }
+        }
+    }
+
     (result, used_source_lines)
 }
 

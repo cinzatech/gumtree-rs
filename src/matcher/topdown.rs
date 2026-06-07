@@ -113,19 +113,28 @@ fn match_at_height(
     mapping: &mut Mapping,
     ambiguous: &mut Vec<(NodeId, NodeId)>,
 ) -> (HashSet<NodeId>, HashSet<NodeId>) {
-    // Collect every isomorphic pair.
-    let iso_pairs: Vec<(NodeId, NodeId)> = source_nodes
-        .iter()
-        .flat_map(|&source_node| {
-            destination_nodes
-                .iter()
-                .copied()
-                .filter(move |&destination_node| {
-                    is_isomorphic(source_tree, source_node, destination_tree, destination_node)
-                })
-                .map(move |destination_node| (source_node, destination_node))
-        })
-        .collect();
+    // Group destination nodes by (hash, kind) so pair generation is O(s + d)
+    // instead of O(s × d).
+    let mut dest_by_signature: HashMap<(u64, &str), Vec<NodeId>> = HashMap::new();
+    for &dst in destination_nodes {
+        let node = destination_tree.node(dst);
+        dest_by_signature
+            .entry((node.hash, node.kind.as_str()))
+            .or_default()
+            .push(dst);
+    }
+
+    // Collect isomorphic pairs via bucket lookup.
+    let mut iso_pairs: Vec<(NodeId, NodeId)> = Vec::new();
+    for &src in source_nodes {
+        let node = source_tree.node(src);
+        let key = (node.hash, node.kind.as_str());
+        if let Some(matches) = dest_by_signature.get(&key) {
+            for &dst in matches {
+                iso_pairs.push((src, dst));
+            }
+        }
+    }
 
     // Count occurrences to detect ambiguity.
     let mut source_count: HashMap<NodeId, usize> = HashMap::new();
@@ -160,20 +169,6 @@ fn match_at_height(
     }
 
     (matched_sources, matched_destinations)
-}
-
-/// Two nodes are isomorphic if their structural hashes match (which already
-/// covers kind, label, and child structure). The kind check is a cheap guard
-/// against hash collisions.
-fn is_isomorphic(
-    source_tree: &Tree,
-    source_node: NodeId,
-    destination_tree: &Tree,
-    destination_node: NodeId,
-) -> bool {
-    let source_data = source_tree.node(source_node);
-    let destination_data = destination_tree.node(destination_node);
-    source_data.hash == destination_data.hash && source_data.kind == destination_data.kind
 }
 
 /// Links two isomorphic subtrees node-by-node in lockstep.

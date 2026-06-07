@@ -9,7 +9,6 @@
 use std::collections::HashMap;
 
 use crate::mapping::Mapping;
-use crate::matcher::topdown::dice_coefficient;
 use crate::tree::{NodeId, Tree};
 
 /// Minimum dice similarity to accept a bottom-up container match.
@@ -32,12 +31,34 @@ pub fn match_bottom_up(
         kind_index.entry(&node.kind).or_default().push(node.id);
     }
 
+    // Precompute which subtrees contain at least one matched descendant.
+    // Post-order propagation: O(n) total instead of O(n²) from per-node
+    // descendant collection.
+    let has_matched = {
+        let mut flags = vec![false; source_tree.node_count()];
+        let order = source_tree.post_order(source_tree.root());
+        for &id in &order {
+            if mapping.has_src(id) {
+                // Mark the parent so ancestor nodes see a matched descendant.
+                if let Some(parent) = source_tree.node(id).parent {
+                    flags[parent] = true;
+                }
+            } else if flags[id] {
+                // This node has a matched descendant; propagate upward.
+                if let Some(parent) = source_tree.node(id).parent {
+                    flags[parent] = true;
+                }
+            }
+        }
+        flags
+    };
+
     let order = source_tree.post_order(source_tree.root());
     for source_node in order {
         if mapping.has_src(source_node) {
             continue;
         }
-        if !has_matched_descendant(source_tree, source_node, mapping) {
+        if !has_matched[source_node] {
             continue;
         }
         let Some(destination_node) = find_candidate(
@@ -70,13 +91,10 @@ pub fn match_bottom_up(
     }
 }
 
-fn has_matched_descendant(tree: &Tree, node_id: NodeId, mapping: &Mapping) -> bool {
-    tree.descendants(node_id)
-        .iter()
-        .any(|descendant| mapping.has_src(*descendant))
-}
-
 /// Best unmapped node in T2 with the same kind, by dice similarity.
+///
+/// Collects source descendants once and reuses them across all candidates
+/// to avoid repeated O(subtree-size) allocations.
 fn find_candidate<'a>(
     source_tree: &Tree,
     source_node: NodeId,
@@ -88,14 +106,16 @@ fn find_candidate<'a>(
     let kind = &source_tree.node(source_node).kind;
     let candidates = kind_index.get(kind.as_str())?;
 
+    // Hoist the source-side descendant collection out of the candidate loop.
+    let source_descendants = source_tree.descendants(source_node);
+
     candidates
         .iter()
         .copied()
         .filter(|candidate| !mapping.has_dst(*candidate))
         .map(|candidate| {
-            let dice = dice_coefficient(
-                source_tree,
-                source_node,
+            let dice = dice_with_source_descendants(
+                &source_descendants,
                 destination_tree,
                 candidate,
                 mapping,
@@ -105,6 +125,32 @@ fn find_candidate<'a>(
         .filter(|(_, dice)| *dice >= min_dice)
         .max_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(node_id, _)| node_id)
+}
+
+/// Dice similarity using pre-collected source descendants to avoid redundant
+/// allocation when comparing one source node against multiple candidates.
+fn dice_with_source_descendants(
+    source_descendants: &[NodeId],
+    destination_tree: &Tree,
+    destination_node: NodeId,
+    mapping: &Mapping,
+) -> f64 {
+    let dest_count = destination_tree.node(destination_node).size - 1;
+
+    if source_descendants.is_empty() && dest_count == 0 {
+        return 0.0;
+    }
+
+    let dest_member = destination_tree.descendant_set(destination_node);
+
+    let common = source_descendants
+        .iter()
+        .filter_map(|descendant| mapping.get_dst(*descendant))
+        .filter(|&mapped_destination| dest_member[mapped_destination])
+        .count();
+
+    let total = source_descendants.len() + dest_count;
+    2.0 * (common as f64) / (total as f64)
 }
 
 /// SimpleGumTree's cheap recovery: match remaining unmapped descendants by
@@ -239,15 +285,13 @@ fn recover_inner_nodes(
             continue;
         }
 
+        // Collect source descendants once for all candidates in this bucket.
+        let src_descs = source_tree.descendants(*source_descendant);
+
         if bucket.len() == 1 {
             let candidate = bucket[0];
-            let dice = dice_coefficient(
-                source_tree,
-                *source_descendant,
-                destination_tree,
-                candidate,
-                mapping,
-            );
+            let dice =
+                dice_with_source_descendants(&src_descs, destination_tree, candidate, mapping);
             if dice > 0.0 {
                 bucket.pop();
                 mapping.link(*source_descendant, candidate);
@@ -259,13 +303,8 @@ fn recover_inner_nodes(
             .iter()
             .enumerate()
             .map(|(index, &candidate)| {
-                let dice = dice_coefficient(
-                    source_tree,
-                    *source_descendant,
-                    destination_tree,
-                    candidate,
-                    mapping,
-                );
+                let dice =
+                    dice_with_source_descendants(&src_descs, destination_tree, candidate, mapping);
                 (index, dice)
             })
             .filter(|(_, dice)| *dice > 0.0)
