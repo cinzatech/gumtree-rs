@@ -120,6 +120,22 @@ impl Tree {
         result
     }
 
+    /// Boolean membership array for all proper descendants of `start`.
+    ///
+    /// Returns a `Vec<bool>` of length `node_count()` where index `i` is `true`
+    /// iff node `i` is a proper descendant of `start`. Faster than collecting
+    /// into a `HashSet<NodeId>` when only membership testing is needed, because
+    /// `NodeId`s are dense arena indices.
+    pub fn descendant_set(&self, start: NodeId) -> Vec<bool> {
+        let mut member = vec![false; self.nodes.len()];
+        let mut stack: Vec<NodeId> = self.nodes[start].children.to_vec();
+        while let Some(id) = stack.pop() {
+            member[id] = true;
+            stack.extend(self.nodes[id].children.iter().copied());
+        }
+        member
+    }
+
     /// Returns the position of `child` within its parent's children list,
     /// or `None` if `child` is the root or has no parent.
     pub fn position_in_parent(&self, child: NodeId) -> Option<usize> {

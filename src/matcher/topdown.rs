@@ -29,10 +29,7 @@ pub fn match_top_down(
 
     let mut ambiguous: Vec<(NodeId, NodeId)> = Vec::new();
 
-    loop {
-        let Some(source_height) = source_queue.peek_height() else {
-            break;
-        };
+    while let Some(source_height) = source_queue.peek_height() {
         let Some(destination_height) = destination_queue.peek_height() else {
             break;
         };
@@ -240,22 +237,22 @@ pub fn dice_coefficient(
     mapping: &Mapping,
 ) -> f64 {
     let source_descendants = source_tree.descendants(source_node);
-    let destination_descendants: HashSet<NodeId> = destination_tree
-        .descendants(destination_node)
-        .into_iter()
-        .collect();
+    let dest_count = destination_tree.node(destination_node).size - 1;
 
-    if source_descendants.is_empty() && destination_descendants.is_empty() {
+    if source_descendants.is_empty() && dest_count == 0 {
         return 0.0;
     }
+
+    // Vec<bool> membership lookup: O(1) per test, no hashing, cache-friendly.
+    let dest_member = destination_tree.descendant_set(destination_node);
 
     let common = source_descendants
         .iter()
         .filter_map(|descendant| mapping.get_dst(*descendant))
-        .filter(|mapped_destination| destination_descendants.contains(mapped_destination))
+        .filter(|&mapped_destination| dest_member[mapped_destination])
         .count();
 
-    let total = source_descendants.len() + destination_descendants.len();
+    let total = source_descendants.len() + dest_count;
     2.0 * (common as f64) / (total as f64)
 }
 
