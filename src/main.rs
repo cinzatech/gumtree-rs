@@ -36,23 +36,19 @@ fn main() -> ExitCode {
                 arg_index += 2;
             }
             "--max-file-size" if arg_index + 1 < args.len() => {
-                max_file_size = Some(match args[arg_index + 1].parse::<u64>() {
-                    Ok(value) => value,
-                    Err(_) => {
-                        eprintln!("invalid value for --max-file-size: {}", args[arg_index + 1]);
-                        return ExitCode::from(2);
-                    }
-                });
+                let Ok(value) = args[arg_index + 1].parse::<u64>() else {
+                    eprintln!("invalid value for --max-file-size: {}", args[arg_index + 1]);
+                    return ExitCode::from(2);
+                };
+                max_file_size = Some(value);
                 arg_index += 2;
             }
             "--parse-timeout" if arg_index + 1 < args.len() => {
-                parse_timeout = Some(match args[arg_index + 1].parse::<u64>() {
-                    Ok(value) => value,
-                    Err(_) => {
-                        eprintln!("invalid value for --parse-timeout: {}", args[arg_index + 1]);
-                        return ExitCode::from(2);
-                    }
-                });
+                let Ok(value) = args[arg_index + 1].parse::<u64>() else {
+                    eprintln!("invalid value for --parse-timeout: {}", args[arg_index + 1]);
+                    return ExitCode::from(2);
+                };
+                parse_timeout = Some(value);
                 arg_index += 2;
             }
             unknown if unknown.starts_with('-') => {

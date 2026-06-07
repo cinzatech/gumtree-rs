@@ -428,56 +428,7 @@ fn build_output_rows<'a>(
     let mut last_source_line: Option<usize> = None;
 
     for (destination_index, destination_line) in destination_lines.iter().enumerate() {
-        if let Some(&source_index) = line_mapping.get(&destination_index) {
-            let gap_start = last_source_line.map_or(0, |l| l + 1);
-            if source_index >= gap_start {
-                for (gap, gap_line) in source_lines
-                    .iter()
-                    .enumerate()
-                    .skip(gap_start)
-                    .take(source_index - gap_start)
-                {
-                    if reverse_mapping.contains_key(&gap) || emitted_source_lines.contains(&gap) {
-                        continue;
-                    }
-                    let spans =
-                        build_line_spans(gap_line, context.source_tree, context.source_leaf_colors);
-                    rows.push(OutputRow {
-                        source_line_number: Some(gap + 1),
-                        source_spans: spans,
-                        destination_line_number: None,
-                        destination_spans: Vec::new(),
-                        is_changed: true,
-                        is_moved: false,
-                    });
-                    emitted_source_lines.insert(gap);
-                }
-            }
-
-            let is_changed = source_lines[source_index].text != destination_line.text;
-            let is_moved = moved_destination_lines.contains(&destination_index);
-            let source_spans = build_line_spans(
-                &source_lines[source_index],
-                context.source_tree,
-                context.source_leaf_colors,
-            );
-            let destination_spans = build_line_spans(
-                destination_line,
-                context.destination_tree,
-                context.destination_leaf_colors,
-            );
-
-            rows.push(OutputRow {
-                source_line_number: Some(source_index + 1),
-                source_spans,
-                destination_line_number: Some(destination_index + 1),
-                destination_spans,
-                is_changed,
-                is_moved,
-            });
-            emitted_source_lines.insert(source_index);
-            last_source_line = Some(source_index);
-        } else {
+        let Some(&source_index) = line_mapping.get(&destination_index) else {
             let destination_spans = build_line_spans(
                 destination_line,
                 context.destination_tree,
@@ -491,7 +442,57 @@ fn build_output_rows<'a>(
                 is_changed: true,
                 is_moved: false,
             });
+            continue;
+        };
+
+        let gap_start = last_source_line.map_or(0, |l| l + 1);
+        if source_index >= gap_start {
+            for (gap, gap_line) in source_lines
+                .iter()
+                .enumerate()
+                .skip(gap_start)
+                .take(source_index - gap_start)
+            {
+                if reverse_mapping.contains_key(&gap) || emitted_source_lines.contains(&gap) {
+                    continue;
+                }
+                let spans =
+                    build_line_spans(gap_line, context.source_tree, context.source_leaf_colors);
+                rows.push(OutputRow {
+                    source_line_number: Some(gap + 1),
+                    source_spans: spans,
+                    destination_line_number: None,
+                    destination_spans: Vec::new(),
+                    is_changed: true,
+                    is_moved: false,
+                });
+                emitted_source_lines.insert(gap);
+            }
         }
+
+        let is_changed = source_lines[source_index].text != destination_line.text;
+        let is_moved = moved_destination_lines.contains(&destination_index);
+        let source_spans = build_line_spans(
+            &source_lines[source_index],
+            context.source_tree,
+            context.source_leaf_colors,
+        );
+        let destination_spans = build_line_spans(
+            destination_line,
+            context.destination_tree,
+            context.destination_leaf_colors,
+        );
+
+        rows.push(OutputRow {
+            source_line_number: Some(source_index + 1),
+            source_spans,
+            destination_line_number: Some(destination_index + 1),
+            destination_spans,
+            is_changed,
+            is_moved,
+        });
+        emitted_source_lines.insert(source_index);
+        last_source_line = Some(source_index);
     }
 
     for (source_index, source_line) in source_lines.iter().enumerate() {

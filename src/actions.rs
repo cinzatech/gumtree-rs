@@ -118,28 +118,28 @@ pub fn generate_actions(
                     position,
                 });
             }
-        } else {
-            let source_node = mapping.get_src(destination_node).expect("mapped");
+            continue;
+        }
 
-            // Label change → update.
-            if source_tree.node(source_node).label != destination_tree.node(destination_node).label
-            {
-                actions.push(Action::Update {
-                    node: source_node,
-                    new_label: destination_tree.node(destination_node).label.clone(),
-                });
-            }
+        let source_node = mapping.get_src(destination_node).expect("mapped");
 
-            // Parent mismatch → move-tree.
-            let parent_of_source = source_tree.node(source_node).parent;
-            let expected_parent_in_source = mapping.get_src(parent);
-            if parent_of_source != expected_parent_in_source {
-                actions.push(Action::MoveTree {
-                    node: source_node,
-                    parent,
-                    position,
-                });
-            }
+        // Label change → update.
+        if source_tree.node(source_node).label != destination_tree.node(destination_node).label {
+            actions.push(Action::Update {
+                node: source_node,
+                new_label: destination_tree.node(destination_node).label.clone(),
+            });
+        }
+
+        // Parent mismatch → move-tree.
+        let parent_of_source = source_tree.node(source_node).parent;
+        let expected_parent_in_source = mapping.get_src(parent);
+        if parent_of_source != expected_parent_in_source {
+            actions.push(Action::MoveTree {
+                node: source_node,
+                parent,
+                position,
+            });
         }
     }
 

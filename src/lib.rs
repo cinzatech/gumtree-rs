@@ -76,21 +76,19 @@ pub fn diff_sources(
     profile: &dyn LanguageProfile,
     options: &DiffOptions,
 ) -> Result<DiffResult, String> {
-    if options.max_file_size > 0 {
-        if old_source.len() as u64 > options.max_file_size {
-            return Err(format!(
-                "old source exceeds max file size ({} bytes > {} bytes)",
-                old_source.len(),
-                options.max_file_size
-            ));
-        }
-        if new_source.len() as u64 > options.max_file_size {
-            return Err(format!(
-                "new source exceeds max file size ({} bytes > {} bytes)",
-                new_source.len(),
-                options.max_file_size
-            ));
-        }
+    if options.max_file_size > 0 && old_source.len() as u64 > options.max_file_size {
+        return Err(format!(
+            "old source exceeds max file size ({} bytes > {} bytes)",
+            old_source.len(),
+            options.max_file_size
+        ));
+    }
+    if options.max_file_size > 0 && new_source.len() as u64 > options.max_file_size {
+        return Err(format!(
+            "new source exceeds max file size ({} bytes > {} bytes)",
+            new_source.len(),
+            options.max_file_size
+        ));
     }
 
     let mut parser = tree_sitter::Parser::new();
@@ -148,21 +146,19 @@ pub fn diff_lines(
     new_source: &[u8],
     options: &DiffOptions,
 ) -> Result<DiffResult, String> {
-    if options.max_file_size > 0 {
-        if old_source.len() as u64 > options.max_file_size {
-            return Err(format!(
-                "old source exceeds max file size ({} bytes > {} bytes)",
-                old_source.len(),
-                options.max_file_size
-            ));
-        }
-        if new_source.len() as u64 > options.max_file_size {
-            return Err(format!(
-                "new source exceeds max file size ({} bytes > {} bytes)",
-                new_source.len(),
-                options.max_file_size
-            ));
-        }
+    if options.max_file_size > 0 && old_source.len() as u64 > options.max_file_size {
+        return Err(format!(
+            "old source exceeds max file size ({} bytes > {} bytes)",
+            old_source.len(),
+            options.max_file_size
+        ));
+    }
+    if options.max_file_size > 0 && new_source.len() as u64 > options.max_file_size {
+        return Err(format!(
+            "new source exceeds max file size ({} bytes > {} bytes)",
+            new_source.len(),
+            options.max_file_size
+        ));
     }
 
     let source_tree = build_line_tree(old_source);

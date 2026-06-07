@@ -9,7 +9,7 @@ A Rust implementation of the **SimpleGumTree** AST differencing algorithm
 Requires a working Rust toolchain (`rustup`, `cargo`).
 
 ```bash
-make build
+make
 sudo make install      # installs to /usr/local/bin
 ```
 

@@ -95,9 +95,8 @@ fn match_exact_content(
     // Process source lines in order; within each content group, pick the
     // closest available destination index.
     for (source_index, &source_label) in source_labels.iter().enumerate() {
-        let destination_indices = match destination_indices_by_content.get(source_label) {
-            Some(indices) => indices,
-            None => continue,
+        let Some(destination_indices) = destination_indices_by_content.get(source_label) else {
+            continue;
         };
 
         // Find the closest unmatched destination with the same content.
@@ -109,14 +108,15 @@ fn match_exact_content(
                 (source_index as isize - destination_index as isize).unsigned_abs()
             });
 
-        if let Some(destination_index) = best_destination {
-            matched_sources[source_index] = true;
-            matched_destinations[destination_index] = true;
-            mapping.link(
-                source_children[source_index],
-                destination_children[destination_index],
-            );
-        }
+        let Some(destination_index) = best_destination else {
+            continue;
+        };
+        matched_sources[source_index] = true;
+        matched_destinations[destination_index] = true;
+        mapping.link(
+            source_children[source_index],
+            destination_children[destination_index],
+        );
     }
 }
 
@@ -164,12 +164,13 @@ fn match_similar_content(
             }
         }
 
-        if let Some(position) = best_destination_position {
-            let destination_index = unmatched_destination_indices.remove(position);
-            mapping.link(
-                source_children[*source_index],
-                destination_children[destination_index],
-            );
-        }
+        let Some(position) = best_destination_position else {
+            continue;
+        };
+        let destination_index = unmatched_destination_indices.remove(position);
+        mapping.link(
+            source_children[*source_index],
+            destination_children[destination_index],
+        );
     }
 }
