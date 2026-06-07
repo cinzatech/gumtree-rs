@@ -20,7 +20,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
 
     let mut positional: Vec<&str> = Vec::new();
-    let mut format = "TEXT".to_string();
+    let mut format = "SIDE".to_string();
     let mut lang_override: Option<String> = None;
     let mut max_file_size: Option<u64> = None;
     let mut parse_timeout: Option<u64> = None;
