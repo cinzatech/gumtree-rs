@@ -134,6 +134,15 @@ macro_rules! define_languages {
         pub fn supported_extensions() -> &'static [&'static str] {
             &[ $( $( $ext, )+ )* ]
         }
+
+        /// Return a human-readable language name for a file extension, or
+        /// `None` if the extension is not recognised.
+        pub fn language_name_for_ext(ext: &str) -> Option<&'static str> {
+            match ext {
+                $( $( $ext )|+ => Some(stringify!($static_name)), )*
+                _ => None,
+            }
+        }
     };
 }
 

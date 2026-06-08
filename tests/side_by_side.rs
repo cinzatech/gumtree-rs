@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use diffame::languages;
-use diffame::side_by_side::format_side_by_side;
+use diffame::side_by_side::{format_side_by_side, SideBySideInput};
 use diffame::{diff_sources, DiffOptions};
 
 /// Helper: diff two Python snippets and return the side-by-side output with
@@ -37,14 +37,16 @@ fn side_by_side_raw(old: &str, new: &str) -> String {
         &DiffOptions::default(),
     )
     .expect("diff failed");
-    format_side_by_side(
-        old.as_bytes(),
-        new.as_bytes(),
-        &result.src_tree,
-        &result.dst_tree,
-        &result.mapping,
-        &result.actions,
-    )
+    format_side_by_side(&SideBySideInput {
+        source_bytes: old.as_bytes(),
+        destination_bytes: new.as_bytes(),
+        source_tree: &result.src_tree,
+        destination_tree: &result.dst_tree,
+        mapping: &result.mapping,
+        actions: &result.actions,
+        filename: None,
+        language_name: None,
+    })
 }
 
 /// Parse plain-text rows into (left_num, left_text, right_num, right_text).

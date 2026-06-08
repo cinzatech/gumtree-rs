@@ -153,12 +153,6 @@ struct OutputRow<'a> {
     is_moved: bool,
 }
 
-impl OutputRow<'_> {
-    fn source_plain_len(&self) -> usize {
-        self.source_spans.iter().map(|s| s.text.len()).sum()
-    }
-}
-
 struct DiffContext<'a> {
     source_tree: &'a Tree,
     destination_tree: &'a Tree,
@@ -302,107 +296,231 @@ fn absent_fill(width: usize) -> String {
     fill.dimmed().to_string()
 }
 
+/// Split a list of colored spans into visual lines of at most `width` columns.
+/// Each returned element is (spans, visual_length).
+fn wrap_spans<'a>(spans: &[ColoredSpan<'a>], width: usize) -> Vec<(Vec<ColoredSpan<'a>>, usize)> {
+    if width == 0 {
+        return vec![(spans.to_vec(), spans.iter().map(|s| s.text.len()).sum())];
+    }
+    let mut lines: Vec<(Vec<ColoredSpan>, usize)> = Vec::new();
+    let mut current_spans: Vec<ColoredSpan> = Vec::new();
+    let mut current_len: usize = 0;
+
+    for span in spans {
+        let mut remaining = span.text;
+        while !remaining.is_empty() {
+            let avail = width.saturating_sub(current_len);
+            if avail == 0 {
+                lines.push((std::mem::take(&mut current_spans), current_len));
+                current_len = 0;
+                continue;
+            }
+            let take = remaining.len().min(avail);
+            // Avoid splitting in the middle of a multi-byte character.
+            let take = if remaining.is_char_boundary(take) {
+                take
+            } else {
+                let mut t = take;
+                while t > 0 && !remaining.is_char_boundary(t) {
+                    t -= 1;
+                }
+                if t == 0 {
+                    // Single character wider than remaining space; push it
+                    // onto a new line so we make progress.
+                    if !current_spans.is_empty() {
+                        lines.push((std::mem::take(&mut current_spans), current_len));
+                        current_len = 0;
+                    }
+                    // take the full char
+                    let mut end = 1;
+                    while !remaining.is_char_boundary(end) {
+                        end += 1;
+                    }
+                    end
+                } else {
+                    t
+                }
+            };
+            current_spans.push(ColoredSpan {
+                text: &remaining[..take],
+                color: span.color,
+            });
+            current_len += take;
+            remaining = &remaining[take..];
+        }
+    }
+    if !current_spans.is_empty() || lines.is_empty() {
+        lines.push((current_spans, current_len));
+    }
+    lines
+}
+
 fn render_row(
     row: &OutputRow,
     line_number_width: usize,
     content_width: usize,
     output: &mut String,
 ) {
-    let left_number_raw = match row.source_line_number {
-        Some(n) => format!("{:>width$}", n, width = line_number_width),
-        None => " ".repeat(line_number_width),
-    };
-    let right_number_raw = match row.destination_line_number {
-        Some(n) => format!("{:>width$}", n, width = line_number_width),
-        None => " ".repeat(line_number_width),
+    let left_visual_lines = if row.source_line_number.is_none() {
+        // No source line: fill with • for each visual line on the right.
+        vec![]
+    } else {
+        wrap_spans(&row.source_spans, content_width)
     };
 
-    let colored_left_number = if row.is_moved && row.source_line_number.is_some() {
-        left_number_raw.cyan().to_string()
+    let right_visual_lines = if row.destination_line_number.is_none() {
+        vec![]
     } else {
-        left_number_raw.dimmed().to_string()
-    };
-    let colored_right_number = if row.is_moved && row.destination_line_number.is_some() {
-        right_number_raw.cyan().to_string()
-    } else {
-        right_number_raw.dimmed().to_string()
+        wrap_spans(&row.destination_spans, content_width)
     };
 
-    // Left content: real spans or • fill when absent.
-    let (left_padded, right_content) = if row.source_line_number.is_none() {
-        // No source line, fill the left side with •.
-        (
-            absent_fill(content_width),
-            render_spans(&row.destination_spans),
-        )
-    } else if row.destination_line_number.is_none() {
-        // No destination line, fill the right side with •.
-        let left_rendered = render_spans(&row.source_spans);
-        let padding = content_width.saturating_sub(row.source_plain_len());
-        (
-            format!("{}{}", left_rendered, " ".repeat(padding)),
-            absent_fill(content_width),
-        )
-    } else {
-        // Both sides present.
-        let left_rendered = render_spans(&row.source_spans);
-        let padding = content_width.saturating_sub(row.source_plain_len());
-        (
-            format!("{}{}", left_rendered, " ".repeat(padding)),
-            render_spans(&row.destination_spans),
-        )
-    };
-
+    let num_visual = left_visual_lines.len().max(right_visual_lines.len()).max(1);
     let separator = "│".dimmed();
 
-    writeln!(
-        output,
-        "{} {} {} {} {} {} {}",
-        colored_left_number,
-        separator,
-        left_padded,
-        separator,
-        colored_right_number,
-        separator,
-        right_content,
-    )
-    .unwrap();
+    for v in 0..num_visual {
+        // Line numbers only on the first visual line.
+        let left_number = if v == 0 {
+            match row.source_line_number {
+                Some(n) => format!("{:>width$}", n, width = line_number_width),
+                None => " ".repeat(line_number_width),
+            }
+        } else {
+            " ".repeat(line_number_width)
+        };
+        let right_number = if v == 0 {
+            match row.destination_line_number {
+                Some(n) => format!("{:>width$}", n, width = line_number_width),
+                None => " ".repeat(line_number_width),
+            }
+        } else {
+            " ".repeat(line_number_width)
+        };
+
+        let colored_left_number = if v == 0 && row.is_moved && row.source_line_number.is_some() {
+            left_number.cyan().to_string()
+        } else if v == 0 && row.source_line_number.is_some() {
+            left_number.dimmed().to_string()
+        } else {
+            left_number.to_string()
+        };
+        let colored_right_number =
+            if v == 0 && row.is_moved && row.destination_line_number.is_some() {
+                right_number.cyan().to_string()
+            } else if v == 0 && row.destination_line_number.is_some() {
+                right_number.dimmed().to_string()
+            } else {
+                right_number.to_string()
+            };
+
+        // Left content.
+        let left_padded = if row.source_line_number.is_none() {
+            absent_fill(content_width)
+        } else if let Some((ref spans, vis_len)) = left_visual_lines.get(v) {
+            let rendered = render_spans(spans);
+            let padding = content_width.saturating_sub(*vis_len);
+            format!("{}{}", rendered, " ".repeat(padding))
+        } else {
+            " ".repeat(content_width)
+        };
+
+        // Right content.
+        let right_content = if row.destination_line_number.is_none() {
+            absent_fill(content_width).to_string()
+        } else if let Some((ref spans, _)) = right_visual_lines.get(v) {
+            render_spans(spans)
+        } else {
+            String::new()
+        };
+
+        writeln!(
+            output,
+            "{} {} {} {} {} {} {}",
+            colored_left_number,
+            separator,
+            left_padded,
+            separator,
+            colored_right_number,
+            separator,
+            right_content,
+        )
+        .unwrap();
+    }
 }
 
 fn render_separator(line_number_width: usize, content_width: usize, output: &mut String) {
     let number_bar = "─".repeat(line_number_width);
     let content_bar = "─".repeat(content_width);
-    writeln!(
-        output,
-        "{}─┼─{}─┼─{}─┼─",
-        number_bar, content_bar, number_bar
-    )
-    .unwrap();
+    let raw = format!(
+        "{}─┼─{}─┼─{}─┼─{}",
+        number_bar, content_bar, number_bar, content_bar
+    );
+    writeln!(output, "{}", raw.dimmed()).unwrap();
 }
 
 pub struct TerminalFormatter;
 
 impl DiffFormatter for TerminalFormatter {
     fn format(input: &FormatInput) -> String {
-        format_side_by_side(
-            input.source_bytes,
-            input.destination_bytes,
-            &input.result.src_tree,
-            &input.result.dst_tree,
-            &input.result.mapping,
-            &input.result.actions,
-        )
+        format_side_by_side(&SideBySideInput {
+            source_bytes: input.source_bytes,
+            destination_bytes: input.destination_bytes,
+            source_tree: &input.result.src_tree,
+            destination_tree: &input.result.dst_tree,
+            mapping: &input.result.mapping,
+            actions: &input.result.actions,
+            filename: input.filename,
+            language_name: input.language_name,
+        })
     }
 }
 
-pub fn format_side_by_side<'a>(
-    source_bytes: &'a [u8],
-    destination_bytes: &'a [u8],
-    source_tree: &Tree,
-    destination_tree: &Tree,
-    mapping: &Mapping,
-    actions: &[Action],
-) -> String {
+/// Render a file-info header line (filename and detected language).
+fn render_file_header(
+    filename: Option<&str>,
+    language_name: Option<&str>,
+    line_number_width: usize,
+    content_width: usize,
+    output: &mut String,
+) {
+    let label = match (filename, language_name) {
+        (Some(f), Some(l)) => format!("{} [{}]", f, l),
+        (Some(f), None) => f.to_string(),
+        (None, Some(l)) => format!("[{}]", l),
+        (None, None) => return,
+    };
+    // Total width: line_num + " │ " + content + " │ " + line_num + " │ " + content
+    let total_width =
+        line_number_width + 3 + content_width + 3 + line_number_width + 3 + content_width;
+    let padded = if label.len() < total_width {
+        format!(" {}{}", label, " ".repeat(total_width - label.len() - 1))
+    } else {
+        format!(" {}", &label[..total_width - 1])
+    };
+    writeln!(output, "{}", padded.bold().dimmed()).unwrap();
+}
+
+/// All inputs needed to produce a side-by-side diff.
+pub struct SideBySideInput<'a> {
+    pub source_bytes: &'a [u8],
+    pub destination_bytes: &'a [u8],
+    pub source_tree: &'a Tree,
+    pub destination_tree: &'a Tree,
+    pub mapping: &'a Mapping,
+    pub actions: &'a [Action],
+    pub filename: Option<&'a str>,
+    pub language_name: Option<&'a str>,
+}
+
+pub fn format_side_by_side(input: &SideBySideInput) -> String {
+    let source_bytes = input.source_bytes;
+    let destination_bytes = input.destination_bytes;
+    let source_tree = input.source_tree;
+    let destination_tree = input.destination_tree;
+    let mapping = input.mapping;
+    let actions = input.actions;
+    let filename = input.filename;
+    let language_name = input.language_name;
+
     let source_lines = split_into_lines(source_bytes);
     let destination_lines = split_into_lines(destination_bytes);
 
@@ -438,6 +556,16 @@ pub fn format_side_by_side<'a>(
     let content_width = 50;
 
     let mut output = String::new();
+    if filename.is_some() || language_name.is_some() {
+        render_file_header(
+            filename,
+            language_name,
+            line_number_width,
+            content_width,
+            &mut output,
+        );
+        render_separator(line_number_width, content_width, &mut output);
+    }
     for (hunk_index, &(start, end)) in hunks.iter().enumerate() {
         if hunk_index > 0 {
             render_separator(line_number_width, content_width, &mut output);

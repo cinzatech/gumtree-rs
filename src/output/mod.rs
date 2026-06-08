@@ -16,6 +16,10 @@ pub struct FormatInput<'a> {
     pub source_bytes: &'a [u8],
     pub destination_bytes: &'a [u8],
     pub result: &'a DiffResult,
+    /// Original file path, shown in the side-by-side header.
+    pub filename: Option<&'a str>,
+    /// Detected language name, shown in the side-by-side header.
+    pub language_name: Option<&'a str>,
 }
 
 /// Common interface implemented by every output format.

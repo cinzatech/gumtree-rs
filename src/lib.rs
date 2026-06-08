@@ -24,7 +24,7 @@ pub mod format {
 
 /// Backward-compatible re-export of the old `side_by_side` module surface.
 pub mod side_by_side {
-    pub use crate::output::terminal::format_side_by_side;
+    pub use crate::output::terminal::{format_side_by_side, SideBySideInput};
 }
 
 use crate::actions::{generate_actions, Action};

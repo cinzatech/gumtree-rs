@@ -139,10 +139,14 @@ fn main() -> ExitCode {
         }
     };
 
+    let lang_name = languages::language_name_for_ext(&ext);
+
     let input = FormatInput {
         source_bytes: &old_src,
         destination_bytes: &new_src,
         result: &result,
+        filename: Some(lang_path),
+        language_name: lang_name,
     };
 
     if format.eq_ignore_ascii_case("JSON") {
