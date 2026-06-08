@@ -544,7 +544,22 @@ pub fn format_side_by_side(input: &SideBySideInput) -> String {
     let hunks = extract_hunks(&rows, 3);
     let max_line_number = source_lines.len().max(destination_lines.len());
     let line_number_width = format!("{max_line_number}").len().max(3);
-    let content_width = 50;
+    let content_width = {
+        // Layout: {line_num} │ {content} │ {line_num} │ {content}
+        // Total  = 2*line_number_width + 2*content_width + 9  (three " │ " separators)
+        let default = 50;
+        terminal_size::terminal_size()
+            .map(|(terminal_size::Width(w), _)| {
+                let chrome = 2 * line_number_width + 9;
+                let w = w as usize;
+                if w > chrome + 2 {
+                    (w - chrome) / 2
+                } else {
+                    default
+                }
+            })
+            .unwrap_or(default)
+    };
 
     let mut output = String::new();
     if filename.is_some() || language_name.is_some() {
