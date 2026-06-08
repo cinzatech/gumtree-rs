@@ -28,6 +28,7 @@ pub struct LinePairing {
 ///
 /// Uses lossy UTF-8 conversion so that non-UTF-8 input degrades gracefully
 /// (matching `build_line_tree`'s behaviour) instead of panicking.
+#[must_use]
 pub fn split_into_lines(bytes: &[u8]) -> Vec<FileLine<'_>> {
     // Safety: we need a &str that lives as long as `bytes`.  For pure-ASCII
     // and valid-UTF-8 inputs (the overwhelming majority) `from_utf8` succeeds
@@ -37,14 +38,13 @@ pub fn split_into_lines(bytes: &[u8]) -> Vec<FileLine<'_>> {
     // `&str` tied to `bytes`.  So we leak the allocation into a &'static str.
     // This only happens for genuinely broken files and the total leaked size
     // equals the file size, bounded by `max_file_size`.
-    let text: &str = match std::str::from_utf8(bytes) {
-        Ok(valid) => valid,
-        Err(_) => {
-            let owned = String::from_utf8_lossy(bytes).into_owned();
-            // Leak is bounded by max_file_size and only triggers for
-            // non-UTF-8 files — an uncommon edge case.
-            Box::leak(owned.into_boxed_str())
-        }
+    let text: &str = if let Ok(valid) = std::str::from_utf8(bytes) {
+        valid
+    } else {
+        let owned = String::from_utf8_lossy(bytes).into_owned();
+        // Leak is bounded by max_file_size and only triggers for
+        // non-UTF-8 files — an uncommon edge case.
+        Box::leak(owned.into_boxed_str())
     };
     let mut lines = Vec::new();
     let mut offset = 0;
@@ -64,6 +64,7 @@ pub fn split_into_lines(bytes: &[u8]) -> Vec<FileLine<'_>> {
 }
 
 /// Returns the line index that contains the given byte offset.
+#[must_use]
 pub fn line_index_at_byte(lines: &[FileLine], byte_offset: usize) -> Option<usize> {
     lines
         .iter()
@@ -71,6 +72,7 @@ pub fn line_index_at_byte(lines: &[FileLine], byte_offset: usize) -> Option<usiz
 }
 
 /// Builds a complete [`LinePairing`] from the AST-level mapping.
+#[must_use]
 pub fn build_line_pairing<'a>(
     source_lines: &[FileLine<'a>],
     destination_lines: &[FileLine<'a>],

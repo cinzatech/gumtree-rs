@@ -28,6 +28,7 @@ pub trait DiffFormatter {
 }
 
 /// Returns the GumTree-style display string for a node.
+#[must_use]
 pub fn format_node(node: &Node) -> String {
     if node.label.is_empty() {
         format!("{} [{},{}]", node.kind, node.start_byte, node.end_byte)

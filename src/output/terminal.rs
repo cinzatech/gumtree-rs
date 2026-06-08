@@ -297,7 +297,7 @@ fn absent_fill(width: usize) -> String {
 }
 
 /// Split a list of colored spans into visual lines of at most `width` columns.
-/// Each returned element is (spans, visual_length).
+/// Each returned element is (spans, `visual_length`).
 fn wrap_spans<'a>(spans: &[ColoredSpan<'a>], width: usize) -> Vec<(Vec<ColoredSpan<'a>>, usize)> {
     if width == 0 {
         return vec![(spans.to_vec(), spans.iter().map(|s| s.text.len()).sum())];
@@ -381,7 +381,7 @@ fn render_row(
         // Line numbers only on the first visual line.
         let left_number = if v == 0 {
             match row.source_line_number {
-                Some(n) => format!("{:>width$}", n, width = line_number_width),
+                Some(n) => format!("{n:>line_number_width$}"),
                 None => " ".repeat(line_number_width),
             }
         } else {
@@ -389,7 +389,7 @@ fn render_row(
         };
         let right_number = if v == 0 {
             match row.destination_line_number {
-                Some(n) => format!("{:>width$}", n, width = line_number_width),
+                Some(n) => format!("{n:>line_number_width$}"),
                 None => " ".repeat(line_number_width),
             }
         } else {
@@ -401,7 +401,7 @@ fn render_row(
         } else if v == 0 && row.source_line_number.is_some() {
             left_number.dimmed().to_string()
         } else {
-            left_number.to_string()
+            left_number.clone()
         };
         let colored_right_number =
             if v == 0 && row.is_moved && row.destination_line_number.is_some() {
@@ -409,7 +409,7 @@ fn render_row(
             } else if v == 0 && row.destination_line_number.is_some() {
                 right_number.dimmed().to_string()
             } else {
-                right_number.to_string()
+                right_number.clone()
             };
 
         // Left content.
@@ -425,7 +425,7 @@ fn render_row(
 
         // Right content.
         let right_content = if row.destination_line_number.is_none() {
-            absent_fill(content_width).to_string()
+            absent_fill(content_width).clone()
         } else if let Some((ref spans, _)) = right_visual_lines.get(v) {
             render_spans(spans)
         } else {
@@ -434,14 +434,7 @@ fn render_row(
 
         writeln!(
             output,
-            "{} {} {} {} {} {} {}",
-            colored_left_number,
-            separator,
-            left_padded,
-            separator,
-            colored_right_number,
-            separator,
-            right_content,
+            "{colored_left_number} {separator} {left_padded} {separator} {colored_right_number} {separator} {right_content}",
         )
         .unwrap();
     }
@@ -450,10 +443,7 @@ fn render_row(
 fn render_separator(line_number_width: usize, content_width: usize, output: &mut String) {
     let number_bar = "─".repeat(line_number_width);
     let content_bar = "─".repeat(content_width);
-    let raw = format!(
-        "{}─┼─{}─┼─{}─┼─{}",
-        number_bar, content_bar, number_bar, content_bar
-    );
+    let raw = format!("{number_bar}─┼─{content_bar}─┼─{number_bar}─┼─{content_bar}");
     writeln!(output, "{}", raw.dimmed()).unwrap();
 }
 
@@ -483,9 +473,9 @@ fn render_file_header(
     output: &mut String,
 ) {
     let label = match (filename, language_name) {
-        (Some(f), Some(l)) => format!("{} [{}]", f, l),
+        (Some(f), Some(l)) => format!("{f} [{l}]"),
         (Some(f), None) => f.to_string(),
-        (None, Some(l)) => format!("[{}]", l),
+        (None, Some(l)) => format!("[{l}]"),
         (None, None) => return,
     };
     // Total width: line_num + " │ " + content + " │ " + line_num + " │ " + content
@@ -511,6 +501,7 @@ pub struct SideBySideInput<'a> {
     pub language_name: Option<&'a str>,
 }
 
+#[must_use]
 pub fn format_side_by_side(input: &SideBySideInput) -> String {
     let source_bytes = input.source_bytes;
     let destination_bytes = input.destination_bytes;
@@ -552,7 +543,7 @@ pub fn format_side_by_side(input: &SideBySideInput) -> String {
 
     let hunks = extract_hunks(&rows, 3);
     let max_line_number = source_lines.len().max(destination_lines.len());
-    let line_number_width = format!("{}", max_line_number).len().max(3);
+    let line_number_width = format!("{max_line_number}").len().max(3);
     let content_width = 50;
 
     let mut output = String::new();

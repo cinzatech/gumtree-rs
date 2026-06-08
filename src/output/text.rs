@@ -10,7 +10,7 @@ impl DiffFormatter for TextFormatter {
     fn format(input: &FormatInput) -> String {
         let mut output = String::new();
         for action in &input.result.actions {
-            writeln!(output, "{:?}", action).unwrap();
+            writeln!(output, "{action:?}").unwrap();
         }
         output
     }

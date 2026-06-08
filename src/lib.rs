@@ -1,6 +1,6 @@
 //! Structural code differencing powered by tree-sitter.
 //!
-//! Implements the SimpleGumTree matcher (Falleri & Martinez, ICSE 2024) on top
+//! Implements the `SimpleGumTree` matcher (Falleri & Martinez, ICSE 2024) on top
 //! of [tree-sitter](https://tree-sitter.github.io) parsers, plus a Chawathe
 //! edit-script generator and multiple output formatters.
 
@@ -67,6 +67,7 @@ impl Default for DiffOptions {
 }
 
 /// Diffs two already-built internal trees.
+#[must_use]
 pub fn diff_trees(source: Tree, destination: Tree, options: &DiffOptions) -> DiffResult {
     let mapping = match_trees(&source, &destination, options.match_options);
     let actions = generate_actions(&source, &destination, &mapping);
@@ -103,7 +104,7 @@ pub fn diff_sources(
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&profile.language())
-        .map_err(|error| format!("set_language: {}", error))?;
+        .map_err(|error| format!("set_language: {error}"))?;
 
     let old_syntax_tree = parse_with_timeout(&mut parser, old_source, options.parse_timeout_us)
         .ok_or_else(|| "failed to parse old source (timeout or error)".to_string())?;

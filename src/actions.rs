@@ -16,7 +16,7 @@
 //! ## Known limitation
 //!
 //! Positions are emitted as final indices in T2 (i.e. where the node ends up
-//! in the destination tree). The Java GumTree tracks positions dynamically as
+//! in the destination tree). The Java `GumTree` tracks positions dynamically as
 //! actions are applied, so a strict comparison of the `at` field may diverge
 //! even when the action set is semantically equivalent.
 
@@ -55,6 +55,7 @@ pub enum Action {
 }
 
 impl Action {
+    #[must_use]
     pub fn action_str(&self) -> &'static str {
         match self {
             Action::InsertTree { .. } => "insert-tree",
@@ -68,6 +69,7 @@ impl Action {
 }
 
 /// Generates the edit script that transforms `t1` into `t2` according to `mapping`.
+#[must_use]
 pub fn generate_actions(
     source_tree: &Tree,
     destination_tree: &Tree,

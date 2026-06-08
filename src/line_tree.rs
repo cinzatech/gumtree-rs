@@ -11,6 +11,7 @@ use crate::tree::{Tree, TreeBuilder};
 ///
 /// Lines are split on `\n`. A trailing newline does not produce an empty
 /// trailing line (matching the convention of `wc -l` and `diff`).
+#[must_use]
 pub fn build_line_tree(source: &[u8]) -> Tree {
     let source_text = String::from_utf8_lossy(source);
     let mut builder = TreeBuilder::new();

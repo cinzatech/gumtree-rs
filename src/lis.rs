@@ -1,5 +1,6 @@
 /// Returns indices into `sequence` that form a longest strictly increasing
 /// subsequence (patience-sort style, O(n log n)).
+#[must_use]
 pub fn longest_increasing_subsequence(sequence: &[usize]) -> Vec<usize> {
     let length = sequence.len();
     if length == 0 {

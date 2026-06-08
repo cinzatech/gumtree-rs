@@ -40,6 +40,7 @@ impl Default for MatchOptions {
 /// regions), and the two roots agree in kind, this function anchors them and
 /// performs one pass of simple recovery so that downstream consumers still
 /// get a meaningful action set.
+#[must_use]
 pub fn match_trees(source_tree: &Tree, destination_tree: &Tree, options: MatchOptions) -> Mapping {
     let mut mapping = Mapping::new();
     topdown::match_top_down(

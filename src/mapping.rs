@@ -15,15 +15,18 @@ pub struct Mapping {
 }
 
 impl Mapping {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Number of mapped pairs.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.src_to_dst.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.src_to_dst.is_empty()
     }
@@ -40,24 +43,29 @@ impl Mapping {
     }
 
     /// Looks up the destination corresponding to a source node.
+    #[must_use]
     pub fn get_dst(&self, src: NodeId) -> Option<NodeId> {
         self.src_to_dst.get(&src).copied()
     }
 
     /// Looks up the source corresponding to a destination node.
+    #[must_use]
     pub fn get_src(&self, dst: NodeId) -> Option<NodeId> {
         self.dst_to_src.get(&dst).copied()
     }
 
+    #[must_use]
     pub fn has_src(&self, src: NodeId) -> bool {
         self.src_to_dst.contains_key(&src)
     }
 
+    #[must_use]
     pub fn has_dst(&self, dst: NodeId) -> bool {
         self.dst_to_src.contains_key(&dst)
     }
 
     /// All `(src, dst)` pairs. Order is implementation-defined.
+    #[must_use]
     pub fn pairs(&self) -> Vec<(NodeId, NodeId)> {
         self.src_to_dst
             .iter()

@@ -214,6 +214,7 @@ define_languages! {
 
 /// Look up a profile by **filename** (e.g. `Dockerfile`, `Makefile`).
 /// Returns `None` for filenames that don't have a special mapping.
+#[must_use]
 pub fn profile_for_filename(name: &str) -> Option<&'static dyn LanguageProfile> {
     // Case-insensitive match for well-known extensionless filenames.
     match name.to_ascii_lowercase().as_str() {

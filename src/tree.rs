@@ -45,16 +45,19 @@ pub struct Tree {
 
 impl Tree {
     /// Returns the root node's id.
+    #[must_use]
     pub fn root(&self) -> NodeId {
         self.root
     }
 
     /// Returns a reference to the node with the given id.
+    #[must_use]
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id]
     }
 
     /// Returns the total number of nodes in the tree.
+    #[must_use]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
@@ -65,6 +68,7 @@ impl Tree {
     }
 
     /// Pre-order traversal starting at `start` (root before children).
+    #[must_use]
     pub fn pre_order(&self, start: NodeId) -> Vec<NodeId> {
         let mut result = Vec::with_capacity(self.nodes[start].size);
         let mut stack = vec![start];
@@ -79,6 +83,7 @@ impl Tree {
     }
 
     /// Post-order traversal starting at `start` (children before root).
+    #[must_use]
     pub fn post_order(&self, start: NodeId) -> Vec<NodeId> {
         // Two-pass: reverse pre-order (right-to-left), then reverse the result.
         let mut result = Vec::with_capacity(self.nodes[start].size);
@@ -94,6 +99,7 @@ impl Tree {
     }
 
     /// Breadth-first traversal starting at `start`.
+    #[must_use]
     pub fn bfs_order(&self, start: NodeId) -> Vec<NodeId> {
         let mut result = Vec::with_capacity(self.nodes[start].size);
         let mut queue = VecDeque::new();
@@ -108,6 +114,7 @@ impl Tree {
     }
 
     /// All proper descendants of `start` (excluding `start` itself).
+    #[must_use]
     pub fn descendants(&self, start: NodeId) -> Vec<NodeId> {
         let mut result = Vec::with_capacity(self.nodes[start].size.saturating_sub(1));
         let mut stack: Vec<NodeId> = self.nodes[start].children.iter().copied().rev().collect();
@@ -126,9 +133,10 @@ impl Tree {
     /// iff node `i` is a proper descendant of `start`. Faster than collecting
     /// into a `HashSet<NodeId>` when only membership testing is needed, because
     /// `NodeId`s are dense arena indices.
+    #[must_use]
     pub fn descendant_set(&self, start: NodeId) -> Vec<bool> {
         let mut member = vec![false; self.nodes.len()];
-        let mut stack: Vec<NodeId> = self.nodes[start].children.to_vec();
+        let mut stack: Vec<NodeId> = self.nodes[start].children.clone();
         while let Some(id) = stack.pop() {
             member[id] = true;
             stack.extend(self.nodes[id].children.iter().copied());
@@ -138,6 +146,7 @@ impl Tree {
 
     /// Returns the position of `child` within its parent's children list,
     /// or `None` if `child` is the root or has no parent.
+    #[must_use]
     pub fn position_in_parent(&self, child: NodeId) -> Option<usize> {
         let parent = self.nodes[child].parent?;
         self.nodes[parent]
@@ -190,6 +199,7 @@ pub struct TreeBuilder {
 }
 
 impl TreeBuilder {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -226,6 +236,7 @@ impl TreeBuilder {
     }
 
     /// Finalises the tree. `root` must be a valid id, normally the first node added.
+    #[must_use]
     pub fn build(self, root: NodeId) -> Tree {
         assert!(root < self.nodes.len(), "root id out of bounds");
         let mut tree = Tree {

@@ -49,6 +49,7 @@ impl DiffFormatter for JsonFormatter {
 
 /// Serialises the full diff result to a JSON string.
 /// output: `{"matches": [...], "actions": [...]}`.
+#[must_use]
 pub fn to_json(
     source_tree: &Tree,
     destination_tree: &Tree,

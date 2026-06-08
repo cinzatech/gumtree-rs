@@ -224,6 +224,7 @@ fn parent_dice(
 /// Defined as `2 * |common| / (|desc(n1)| + |desc(n2)|)` where `common` is the
 /// number of descendants of `n1` whose mapped image lies within the descendants
 /// of `n2`.
+#[must_use]
 pub fn dice_coefficient(
     source_tree: &Tree,
     source_node: NodeId,

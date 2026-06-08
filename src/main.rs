@@ -32,7 +32,7 @@ fn main() -> ExitCode {
     while arg_index < args.len() {
         match args[arg_index].as_str() {
             "-h" | "--help" => {
-                print_usage(args.first().map(String::as_str).unwrap_or("diffame"));
+                print_usage(args.first().map_or("diffame", String::as_str));
                 return ExitCode::SUCCESS;
             }
             "-f" if arg_index + 1 < args.len() => {
@@ -60,7 +60,7 @@ fn main() -> ExitCode {
                 arg_index += 2;
             }
             unknown if unknown.starts_with('-') => {
-                eprintln!("unknown option: {}", unknown);
+                eprintln!("unknown option: {unknown}");
                 print_usage(&args[0]);
                 return ExitCode::from(2);
             }
@@ -81,7 +81,7 @@ fn main() -> ExitCode {
         2 => (positional[0], positional[1], positional[0]),
         7 => (positional[1], positional[4], positional[0]),
         _ => {
-            print_usage(args.first().map(String::as_str).unwrap_or("diffame"));
+            print_usage(args.first().map_or("diffame", String::as_str));
             return ExitCode::from(2);
         }
     };
@@ -107,14 +107,14 @@ fn main() -> ExitCode {
     let old_src = match fs::read(old_path) {
         Ok(bytes) => bytes,
         Err(error) => {
-            eprintln!("failed to read {}: {}", old_path, error);
+            eprintln!("failed to read {old_path}: {error}");
             return ExitCode::from(1);
         }
     };
     let new_src = match fs::read(new_path) {
         Ok(bytes) => bytes,
         Err(error) => {
-            eprintln!("failed to read {}: {}", new_path, error);
+            eprintln!("failed to read {new_path}: {error}");
             return ExitCode::from(1);
         }
     };
@@ -134,7 +134,7 @@ fn main() -> ExitCode {
     let result = match diff_result {
         Ok(value) => value,
         Err(error) => {
-            eprintln!("diff failed: {}", error);
+            eprintln!("diff failed: {error}");
             return ExitCode::from(1);
         }
     };
@@ -151,23 +151,20 @@ fn main() -> ExitCode {
 
     if format.eq_ignore_ascii_case("JSON") {
         let output = JsonFormatter::format(&input);
-        println!("{}", output);
+        println!("{output}");
     } else if format.eq_ignore_ascii_case("SIDE") {
         let output = TerminalFormatter::format(&input);
-        print!("{}", output);
+        print!("{output}");
     } else {
         let output = TextFormatter::format(&input);
-        print!("{}", output);
+        print!("{output}");
     }
 
     ExitCode::SUCCESS
 }
 
 fn print_usage(progname: &str) {
-    eprintln!(
-        "usage: {} <old-file> <new-file> [-f JSON|TEXT|SIDE] [-l EXT]",
-        progname
-    );
+    eprintln!("usage: {progname} <old-file> <new-file> [-f JSON|TEXT|SIDE] [-l EXT]");
     eprintln!();
     eprintln!("  Also accepts git's 7-argument diff.external invocation.");
     eprintln!();

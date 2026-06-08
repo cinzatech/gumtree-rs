@@ -22,6 +22,7 @@ const MIN_SIMILARITY: f64 = 0.5;
 ///
 /// Both trees must have the structure produced by [`crate::line_tree::build_line_tree`]:
 /// a single root with zero or more leaf children.
+#[must_use]
 pub fn match_lines(source: &Tree, destination: &Tree) -> Mapping {
     let source_root = source.root();
     let destination_root = destination.root();

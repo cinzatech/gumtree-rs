@@ -1,4 +1,4 @@
-//! Bottom-up (container) matching phase plus the SimpleGumTree recovery step.
+//! Bottom-up (container) matching phase plus the `SimpleGumTree` recovery step.
 //!
 //! After the top-down phase has anchored large isomorphic subtrees, this phase
 //! walks `T1` in post-order. For each unmapped node whose subtree already
@@ -153,7 +153,7 @@ fn dice_with_source_descendants(
     2.0 * (common as f64) / (total as f64)
 }
 
-/// SimpleGumTree's cheap recovery: match remaining unmapped descendants by
+/// `SimpleGumTree`'s cheap recovery: match remaining unmapped descendants by
 /// (kind, label) first, then by (mapped parent + kind + sibling position).
 ///
 /// Exposed so that integrating code (e.g. [`crate::matcher::match_trees`])
