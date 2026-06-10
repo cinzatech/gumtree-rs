@@ -33,58 +33,33 @@ enum SpanColor {
     Inserted,
 }
 
-fn classify_source_leaves(
-    source_tree: &Tree,
-    mapping: &Mapping,
-    actions: &[Action],
-) -> HashMap<NodeId, SpanColor> {
-    let updated_nodes: HashSet<NodeId> = actions
+/// Source nodes targeted by an `Update` action.
+fn updated_nodes(actions: &[Action]) -> HashSet<NodeId> {
+    actions
         .iter()
         .filter_map(|a| match a {
             Action::Update { node, .. } => Some(*node),
             _ => None,
-        })
-        .collect();
-
-    source_tree
-        .all_nodes()
-        .filter(|n| n.children.is_empty())
-        .map(|n| {
-            let color = if !mapping.has_src(n.id) {
-                SpanColor::Deleted
-            } else if updated_nodes.contains(&n.id) {
-                SpanColor::Updated
-            } else {
-                SpanColor::Unchanged
-            };
-            (n.id, color)
         })
         .collect()
 }
 
-fn classify_destination_leaves(
-    destination_tree: &Tree,
-    mapping: &Mapping,
-    actions: &[Action],
+/// Colors every leaf of `tree`: `unmapped_color` when `is_unmapped`,
+/// `Updated` when `is_updated`, `Unchanged` otherwise. The two closures
+/// encode the only source/destination asymmetry (which side of the mapping
+/// to consult).
+fn classify_leaves(
+    tree: &Tree,
+    is_unmapped: impl Fn(NodeId) -> bool,
+    is_updated: impl Fn(NodeId) -> bool,
+    unmapped_color: SpanColor,
 ) -> HashMap<NodeId, SpanColor> {
-    let updated_source_nodes: HashSet<NodeId> = actions
-        .iter()
-        .filter_map(|a| match a {
-            Action::Update { node, .. } => Some(*node),
-            _ => None,
-        })
-        .collect();
-
-    destination_tree
-        .all_nodes()
+    tree.all_nodes()
         .filter(|n| n.children.is_empty())
         .map(|n| {
-            let color = if !mapping.has_dst(n.id) {
-                SpanColor::Inserted
-            } else if mapping
-                .get_src(n.id)
-                .is_some_and(|src_id| updated_source_nodes.contains(&src_id))
-            {
+            let color = if is_unmapped(n.id) {
+                unmapped_color
+            } else if is_updated(n.id) {
                 SpanColor::Updated
             } else {
                 SpanColor::Unchanged
@@ -154,6 +129,38 @@ struct OutputRow<'a> {
     is_moved: bool,
 }
 
+impl<'a> OutputRow<'a> {
+    /// Unpaired source line: entire line is deleted.
+    fn deleted(line_index: usize, text: &'a str) -> Self {
+        Self {
+            source_line_number: Some(line_index + 1),
+            source_spans: vec![ColoredSpan {
+                text,
+                color: SpanColor::Deleted,
+            }],
+            destination_line_number: None,
+            destination_spans: Vec::new(),
+            is_changed: true,
+            is_moved: false,
+        }
+    }
+
+    /// Unpaired destination line: entire line is inserted.
+    fn inserted(line_index: usize, text: &'a str) -> Self {
+        Self {
+            source_line_number: None,
+            source_spans: Vec::new(),
+            destination_line_number: Some(line_index + 1),
+            destination_spans: vec![ColoredSpan {
+                text,
+                color: SpanColor::Inserted,
+            }],
+            is_changed: true,
+            is_moved: false,
+        }
+    }
+}
+
 struct DiffContext<'a> {
     source_tree: &'a Tree,
     destination_tree: &'a Tree,
@@ -177,18 +184,10 @@ fn build_output_rows<'a>(
 
     for (destination_index, destination_line) in destination_lines.iter().enumerate() {
         let Some(&source_index) = line_mapping.get(&destination_index) else {
-            // Unpaired destination line: entire line is inserted.
-            rows.push(OutputRow {
-                source_line_number: None,
-                source_spans: Vec::new(),
-                destination_line_number: Some(destination_index + 1),
-                destination_spans: vec![ColoredSpan {
-                    text: destination_line.text,
-                    color: SpanColor::Inserted,
-                }],
-                is_changed: true,
-                is_moved: false,
-            });
+            rows.push(OutputRow::inserted(
+                destination_index,
+                destination_line.text,
+            ));
             continue;
         };
 
@@ -203,18 +202,7 @@ fn build_output_rows<'a>(
                 if reverse_mapping.contains_key(&gap) || emitted_source_lines.contains(&gap) {
                     continue;
                 }
-                // Unpaired source line: entire line is deleted.
-                rows.push(OutputRow {
-                    source_line_number: Some(gap + 1),
-                    source_spans: vec![ColoredSpan {
-                        text: gap_line.text,
-                        color: SpanColor::Deleted,
-                    }],
-                    destination_line_number: None,
-                    destination_spans: Vec::new(),
-                    is_changed: true,
-                    is_moved: false,
-                });
+                rows.push(OutputRow::deleted(gap, gap_line.text));
                 emitted_source_lines.insert(gap);
             }
         }
@@ -268,18 +256,7 @@ fn build_output_rows<'a>(
         {
             continue;
         }
-        // Unpaired source line: entire line is deleted.
-        rows.push(OutputRow {
-            source_line_number: Some(source_index + 1),
-            source_spans: vec![ColoredSpan {
-                text: source_line.text,
-                color: SpanColor::Deleted,
-            }],
-            destination_line_number: None,
-            destination_spans: Vec::new(),
-            is_changed: true,
-            is_moved: false,
-        });
+        rows.push(OutputRow::deleted(source_index, source_line.text));
     }
 
     rows
@@ -394,6 +371,23 @@ fn display_width(text: &str) -> usize {
     text.chars().map(|ch| ch.width().unwrap_or(0)).sum()
 }
 
+/// Formats one line-number cell: right-aligned and dimmed (or cyan when the
+/// row is moved) on the first visual line, blank on wrapped continuation
+/// lines or when the side has no line.
+fn number_cell(number: Option<usize>, visual_index: usize, is_moved: bool, width: usize) -> String {
+    match number {
+        Some(n) if visual_index == 0 => {
+            let cell = format!("{n:>width$}");
+            if is_moved {
+                cell.cyan().to_string()
+            } else {
+                cell.dimmed().to_string()
+            }
+        }
+        _ => " ".repeat(width),
+    }
+}
+
 fn render_row(
     row: &OutputRow,
     line_number_width: usize,
@@ -417,39 +411,14 @@ fn render_row(
     let separator = "│".dimmed();
 
     for v in 0..num_visual {
-        // Line numbers only on the first visual line.
-        let left_number = if v == 0 {
-            match row.source_line_number {
-                Some(n) => format!("{n:>line_number_width$}"),
-                None => " ".repeat(line_number_width),
-            }
-        } else {
-            " ".repeat(line_number_width)
-        };
-        let right_number = if v == 0 {
-            match row.destination_line_number {
-                Some(n) => format!("{n:>line_number_width$}"),
-                None => " ".repeat(line_number_width),
-            }
-        } else {
-            " ".repeat(line_number_width)
-        };
-
-        let colored_left_number = if v == 0 && row.is_moved && row.source_line_number.is_some() {
-            left_number.cyan().to_string()
-        } else if v == 0 && row.source_line_number.is_some() {
-            left_number.dimmed().to_string()
-        } else {
-            left_number.clone()
-        };
-        let colored_right_number =
-            if v == 0 && row.is_moved && row.destination_line_number.is_some() {
-                right_number.cyan().to_string()
-            } else if v == 0 && row.destination_line_number.is_some() {
-                right_number.dimmed().to_string()
-            } else {
-                right_number.clone()
-            };
+        let colored_left_number =
+            number_cell(row.source_line_number, v, row.is_moved, line_number_width);
+        let colored_right_number = number_cell(
+            row.destination_line_number,
+            v,
+            row.is_moved,
+            line_number_width,
+        );
 
         // Left content.
         let left_padded = if row.source_line_number.is_none() {
@@ -542,17 +511,16 @@ pub struct SideBySideInput<'a> {
 
 #[must_use]
 pub fn format_side_by_side(input: &SideBySideInput) -> String {
-    let source_bytes = input.source_bytes;
-    let destination_bytes = input.destination_bytes;
-    let source_tree = input.source_tree;
-    let destination_tree = input.destination_tree;
-    let mapping = input.mapping;
-    let actions = input.actions;
-    let filename = input.filename;
-    let language_name = input.language_name;
+    let SideBySideInput {
+        source_tree,
+        destination_tree,
+        mapping,
+        actions,
+        ..
+    } = *input;
 
-    let source_lines = split_into_lines(source_bytes);
-    let destination_lines = split_into_lines(destination_bytes);
+    let source_lines = split_into_lines(input.source_bytes);
+    let destination_lines = split_into_lines(input.destination_bytes);
 
     let pairing = build_line_pairing(
         &source_lines,
@@ -562,8 +530,23 @@ pub fn format_side_by_side(input: &SideBySideInput) -> String {
         mapping,
     );
 
-    let source_leaf_colors = classify_source_leaves(source_tree, mapping, actions);
-    let destination_leaf_colors = classify_destination_leaves(destination_tree, mapping, actions);
+    let updated = updated_nodes(actions);
+    let source_leaf_colors = classify_leaves(
+        source_tree,
+        |id| !mapping.has_src(id),
+        |id| updated.contains(&id),
+        SpanColor::Deleted,
+    );
+    let destination_leaf_colors = classify_leaves(
+        destination_tree,
+        |id| !mapping.has_dst(id),
+        |id| {
+            mapping
+                .get_src(id)
+                .is_some_and(|src| updated.contains(&src))
+        },
+        SpanColor::Inserted,
+    );
 
     let context = DiffContext {
         source_tree,
@@ -601,10 +584,10 @@ pub fn format_side_by_side(input: &SideBySideInput) -> String {
     };
 
     let mut output = String::new();
-    if filename.is_some() || language_name.is_some() {
+    if input.filename.is_some() || input.language_name.is_some() {
         render_file_header(
-            filename,
-            language_name,
+            input.filename,
+            input.language_name,
             line_number_width,
             content_width,
             &mut output,

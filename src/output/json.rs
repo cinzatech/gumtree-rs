@@ -79,60 +79,48 @@ pub fn to_json(
 }
 
 fn format_action(source_tree: &Tree, destination_tree: &Tree, action: &Action) -> ActionEntry {
-    match action {
+    let (tree, parent, at, label) = match action {
+        // Inserts name destination nodes; everything else names source nodes.
         Action::InsertTree {
             node,
             parent,
             position,
-        } => ActionEntry {
-            action: "insert-tree",
-            tree: format_node(destination_tree.node(*node)),
-            parent: Some(format_node(destination_tree.node(*parent))),
-            at: Some(*position),
-            label: None,
-        },
-        Action::InsertNode {
+        }
+        | Action::InsertNode {
             node,
             parent,
             position,
-        } => ActionEntry {
-            action: "insert-node",
-            tree: format_node(destination_tree.node(*node)),
-            parent: Some(format_node(destination_tree.node(*parent))),
-            at: Some(*position),
-            label: None,
-        },
-        Action::DeleteTree { node } => ActionEntry {
-            action: "delete-tree",
-            tree: format_node(source_tree.node(*node)),
-            parent: None,
-            at: None,
-            label: None,
-        },
-        Action::DeleteNode { node } => ActionEntry {
-            action: "delete-node",
-            tree: format_node(source_tree.node(*node)),
-            parent: None,
-            at: None,
-            label: None,
-        },
-        Action::Update { node, new_label } => ActionEntry {
-            action: "update-node",
-            tree: format_node(source_tree.node(*node)),
-            parent: None,
-            at: None,
-            label: Some(new_label.clone()),
-        },
+        } => (
+            format_node(destination_tree.node(*node)),
+            Some(format_node(destination_tree.node(*parent))),
+            Some(*position),
+            None,
+        ),
+        Action::DeleteTree { node } | Action::DeleteNode { node } => {
+            (format_node(source_tree.node(*node)), None, None, None)
+        }
+        Action::Update { node, new_label } => (
+            format_node(source_tree.node(*node)),
+            None,
+            None,
+            Some(new_label.clone()),
+        ),
         Action::MoveTree {
             node,
             parent,
             position,
-        } => ActionEntry {
-            action: "move-tree",
-            tree: format_node(source_tree.node(*node)),
-            parent: Some(format_node(destination_tree.node(*parent))),
-            at: Some(*position),
-            label: None,
-        },
+        } => (
+            format_node(source_tree.node(*node)),
+            Some(format_node(destination_tree.node(*parent))),
+            Some(*position),
+            None,
+        ),
+    };
+    ActionEntry {
+        action: action.action_str(),
+        tree,
+        parent,
+        at,
+        label,
     }
 }

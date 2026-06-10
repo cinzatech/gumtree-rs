@@ -232,24 +232,12 @@ pub fn dice_coefficient(
     destination_node: NodeId,
     mapping: &Mapping,
 ) -> f64 {
-    let source_descendants = source_tree.descendants(source_node);
-    let dest_count = destination_tree.node(destination_node).size - 1;
-
-    if source_descendants.is_empty() && dest_count == 0 {
-        return 0.0;
-    }
-
-    // Vec<bool> membership lookup: O(1) per test, no hashing, cache-friendly.
-    let dest_member = destination_tree.descendant_set(destination_node);
-
-    let common = source_descendants
-        .iter()
-        .filter_map(|descendant| mapping.get_dst(*descendant))
-        .filter(|&mapped_destination| dest_member[mapped_destination])
-        .count();
-
-    let total = source_descendants.len() + dest_count;
-    2.0 * (common as f64) / (total as f64)
+    super::dice_with_source_descendants(
+        &source_tree.descendants(source_node),
+        destination_tree,
+        destination_node,
+        mapping,
+    )
 }
 
 /// Priority queue keyed by node height, with max-heap behaviour.

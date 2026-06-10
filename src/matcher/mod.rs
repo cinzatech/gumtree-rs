@@ -9,7 +9,39 @@ pub mod line_diff;
 pub mod topdown;
 
 use crate::mapping::Mapping;
-use crate::tree::Tree;
+use crate::tree::{NodeId, Tree};
+
+/// Dice similarity between a pre-collected set of source descendants and the
+/// descendants of `destination_node`, given a partial mapping.
+///
+/// Defined as `2 * |common| / (|desc(n1)| + |desc(n2)|)` where `common` is the
+/// number of source descendants whose mapped image lies within the descendants
+/// of `destination_node`. Taking the source side pre-collected lets callers
+/// hoist that allocation out of candidate loops.
+pub(crate) fn dice_with_source_descendants(
+    source_descendants: &[NodeId],
+    destination_tree: &Tree,
+    destination_node: NodeId,
+    mapping: &Mapping,
+) -> f64 {
+    let dest_count = destination_tree.node(destination_node).size - 1;
+
+    if source_descendants.is_empty() && dest_count == 0 {
+        return 0.0;
+    }
+
+    // Vec<bool> membership lookup: O(1) per test, no hashing, cache-friendly.
+    let dest_member = destination_tree.descendant_set(destination_node);
+
+    let common = source_descendants
+        .iter()
+        .filter_map(|descendant| mapping.get_dst(*descendant))
+        .filter(|&mapped_destination| dest_member[mapped_destination])
+        .count();
+
+    let total = source_descendants.len() + dest_count;
+    2.0 * (common as f64) / (total as f64)
+}
 
 /// Hyperparameters for the matcher.
 #[derive(Debug, Clone, Copy)]

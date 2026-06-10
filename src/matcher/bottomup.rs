@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use crate::mapping::Mapping;
 use crate::tree::{NodeId, Tree};
 
+use super::dice_with_source_descendants;
+
 /// Minimum dice similarity to accept a bottom-up container match.
 pub const DEFAULT_MIN_DICE: f64 = 0.5;
 /// Maximum subtree size for which simple-recovery runs (perf guard).
@@ -125,32 +127,6 @@ fn find_candidate<'a>(
         .filter(|(_, dice)| *dice >= min_dice)
         .max_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(node_id, _)| node_id)
-}
-
-/// Dice similarity using pre-collected source descendants to avoid redundant
-/// allocation when comparing one source node against multiple candidates.
-fn dice_with_source_descendants(
-    source_descendants: &[NodeId],
-    destination_tree: &Tree,
-    destination_node: NodeId,
-    mapping: &Mapping,
-) -> f64 {
-    let dest_count = destination_tree.node(destination_node).size - 1;
-
-    if source_descendants.is_empty() && dest_count == 0 {
-        return 0.0;
-    }
-
-    let dest_member = destination_tree.descendant_set(destination_node);
-
-    let common = source_descendants
-        .iter()
-        .filter_map(|descendant| mapping.get_dst(*descendant))
-        .filter(|&mapped_destination| dest_member[mapped_destination])
-        .count();
-
-    let total = source_descendants.len() + dest_count;
-    2.0 * (common as f64) / (total as f64)
 }
 
 /// `SimpleGumTree`'s cheap recovery: match remaining unmapped descendants by
