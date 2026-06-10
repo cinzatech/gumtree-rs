@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::mapping::Mapping;
+use crate::string_distance::normalised_similarity;
 use crate::tree::Tree;
 
 /// A single logical line within a source buffer.
@@ -206,16 +207,15 @@ fn phase2_text_match(
         }
     }
 
-    for (dst_from, dst_to, src_from, src_to) in gaps {
+    // First pass, per gap: match by identical text.
+    for &(dst_from, dst_to, src_from, src_to) in &gaps {
         let mut available: Vec<usize> = (src_from..src_to)
             .filter(|s| !used_source_lines.contains(s))
             .collect();
-
-        // First pass: match by identical text.
         let unmatched_dst: Vec<usize> = (dst_from..dst_to)
             .filter(|d| !result.contains_key(d))
             .collect();
-        for &d in &unmatched_dst {
+        for d in unmatched_dst {
             let text = destination_lines[d].text;
             if let Some(pos) = available.iter().position(|&s| source_lines[s].text == text) {
                 let s = available.remove(pos);
@@ -223,18 +223,68 @@ fn phase2_text_match(
                 used_source_lines.insert(s);
             }
         }
+    }
 
-        // Second pass: pair remaining unmatched lines positionally.
-        let remaining_src: Vec<usize> = available
-            .into_iter()
+    // Second pass, global: anchors from reordered code are non-monotonic,
+    // so some lines fall outside every gap.  Pair any remaining line whose
+    // exact text occurs exactly once among the unmatched lines of each side
+    // (e.g. `return a + b` of a moved function).  Runs before similarity
+    // matching so identical lines claim their partners first.
+    let leftover_dst: Vec<usize> = (0..dst_count)
+        .filter(|d| !result.contains_key(d) && !destination_lines[*d].text.trim().is_empty())
+        .collect();
+    let leftover_src: Vec<usize> = (0..src_count)
+        .filter(|s| !used_source_lines.contains(s) && !source_lines[*s].text.trim().is_empty())
+        .collect();
+    let mut src_by_text: HashMap<&str, Vec<usize>> = HashMap::new();
+    for &s in &leftover_src {
+        src_by_text.entry(source_lines[s].text).or_default().push(s);
+    }
+    let mut dst_text_count: HashMap<&str, usize> = HashMap::new();
+    for &d in &leftover_dst {
+        *dst_text_count.entry(destination_lines[d].text).or_insert(0) += 1;
+    }
+    for &d in &leftover_dst {
+        let text = destination_lines[d].text;
+        if dst_text_count[text] != 1 {
+            continue;
+        }
+        if let Some(sources) = src_by_text.get(text) {
+            if let [s] = sources[..] {
+                result.insert(d, s);
+                used_source_lines.insert(s);
+            }
+        }
+    }
+
+    // Third pass, per gap: pair remaining lines by text similarity, best
+    // match first, so `.collect()` pairs with `.collect();` rather than
+    // with whatever line happens to sit at the same offset.  Dissimilar
+    // lines stay unpaired and render as whole-line delete/insert.
+    for &(dst_from, dst_to, src_from, src_to) in &gaps {
+        let available: Vec<usize> = (src_from..src_to)
             .filter(|s| !used_source_lines.contains(s))
             .collect();
-        let mut src_iter = remaining_src.into_iter();
-        for d in dst_from..dst_to {
-            if result.contains_key(&d) {
+        let remaining_dst: Vec<usize> = (dst_from..dst_to)
+            .filter(|d| !result.contains_key(d))
+            .collect();
+        let mut scored: Vec<(f64, usize, usize)> = Vec::new();
+        for &d in &remaining_dst {
+            for &s in &available {
+                let similarity = normalised_similarity(
+                    destination_lines[d].text.trim(),
+                    source_lines[s].text.trim(),
+                );
+                if similarity >= SIMILARITY_THRESHOLD {
+                    scored.push((similarity, d, s));
+                }
+            }
+        }
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (_, d, s) in scored {
+            if result.contains_key(&d) || used_source_lines.contains(&s) {
                 continue;
             }
-            let Some(s) = src_iter.next() else { break };
             result.insert(d, s);
             used_source_lines.insert(s);
         }
@@ -242,6 +292,12 @@ fn phase2_text_match(
 
     (result, used_source_lines)
 }
+
+/// Minimum trimmed-text similarity for two non-identical lines to pair.
+/// Low enough that `print(about)` still pairs with its expanded successor
+/// (≈0.35), high enough that unrelated lines like `result` and
+/// `.collect()` (≈0.2) stay apart.
+const SIMILARITY_THRESHOLD: f64 = 0.3;
 
 /// Phase 3: pair remaining blank lines positionally.
 fn phase3_blanks(

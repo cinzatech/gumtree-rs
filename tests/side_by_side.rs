@@ -693,3 +693,109 @@ fn foo() {
     }
     panic!("did not find a line containing 'if flag'");
 }
+
+/// When functions are reordered, identical lines like `return a + b`
+/// that fall between non-monotonic anchors must still be paired.
+#[test]
+fn reordered_functions_still_pair_identical_lines() {
+    let output = side_by_side_plain(FUNC_OLD, FUNC_NEW);
+    let rows = parse_rows(&output);
+
+    // `return a + b` exists in both files — it must be paired.
+    let return_row = rows
+        .iter()
+        .find(|(_, left, _, _)| left.contains("return a + b"))
+        .expect("should have 'return a + b' on the left");
+    assert!(
+        return_row.2.is_some() && return_row.3.contains("return a + b"),
+        "'return a + b' on left must pair with identical right, got right={:?}",
+        return_row.3,
+    );
+}
+
+/// A comment that replaces a code line must be fully green — both the
+/// `//` prefix AND the comment text.  tree-sitter splits `//` as a
+/// separate child of `line_comment`; the comment body must not become
+/// invisible gap text.
+#[test]
+fn added_comment_is_fully_green() {
+    let old = "\
+fn foo() {
+    old_call();
+    bar();
+}
+";
+    let new = "\
+fn foo() {
+    // this is new
+    bar();
+}
+";
+    let output = side_by_side_lang_colored(old, new, "rs");
+
+    for line in output.lines() {
+        let clean = strip_ansi(line);
+        if !clean.contains("this is new") {
+            continue;
+        }
+        let right_content = line.split('│').nth(3).unwrap_or("");
+        // The whole comment text (not just //) must be green.
+        assert!(
+            has_color_at(right_content, "this is new", ANSI_GREEN),
+            "Comment body should be green, not just the '//' prefix.\n\
+             Right: {right_content:?}",
+        );
+        return;
+    }
+    panic!("did not find a line containing 'this is new'");
+}
+
+/// When a statement-style function body is refactored to expression style,
+/// `.collect();` must pair with `.collect()` (nearly identical), and the
+/// now-removed `result`-style return line must be left unpaired — not
+/// paired positionally with a completely dissimilar line.
+#[test]
+fn similar_lines_pair_instead_of_positional_neighbors() {
+    let old = "\
+fn kept(node: &Node, profile: &Profile) -> Vec<Node> {
+    let children: Vec<Node> = node
+        .named_children()
+        .filter(|child| profile.keep(child))
+        .collect();
+    children
+}
+";
+    let new = "\
+fn kept(node: &Node, profile: &Profile) -> Vec<Node> {
+    node
+        .children()
+        .filter(|child| profile.keep(child) || child.is_leaf())
+        .collect()
+}
+";
+    let output = side_by_side_lang_plain(old, new, "rs");
+    let rows = parse_rows(&output);
+
+    // The right `.collect()` row must have `.collect` on the left too.
+    let collect_row = rows
+        .iter()
+        .find(|(_, _, _, right)| right.contains(".collect()"))
+        .expect("should have '.collect()' on the right");
+    assert!(
+        collect_row.1.contains(".collect"),
+        "right '.collect()' should pair with left '.collect();', got left={:?}",
+        collect_row.1,
+    );
+
+    // The bare `children` return line was removed — it must be left-only.
+    let children_row = rows
+        .iter()
+        .find(|(_, left, _, _)| left.trim() == "children")
+        .expect("should have the bare 'children' return line on the left");
+    assert!(
+        children_row.2.is_none(),
+        "the removed 'children' return line must be unpaired, got right_num={:?} right={:?}",
+        children_row.2,
+        children_row.3,
+    );
+}
