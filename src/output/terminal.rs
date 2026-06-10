@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use colored::Colorize;
+use unicode_width::UnicodeWidthChar;
 
 use crate::actions::Action;
 use crate::mapping::Mapping;
@@ -176,16 +177,15 @@ fn build_output_rows<'a>(
 
     for (destination_index, destination_line) in destination_lines.iter().enumerate() {
         let Some(&source_index) = line_mapping.get(&destination_index) else {
-            let destination_spans = build_line_spans(
-                destination_line,
-                context.destination_tree,
-                context.destination_leaf_colors,
-            );
+            // Unpaired destination line: entire line is inserted.
             rows.push(OutputRow {
                 source_line_number: None,
                 source_spans: Vec::new(),
                 destination_line_number: Some(destination_index + 1),
-                destination_spans,
+                destination_spans: vec![ColoredSpan {
+                    text: destination_line.text,
+                    color: SpanColor::Inserted,
+                }],
                 is_changed: true,
                 is_moved: false,
             });
@@ -203,11 +203,13 @@ fn build_output_rows<'a>(
                 if reverse_mapping.contains_key(&gap) || emitted_source_lines.contains(&gap) {
                     continue;
                 }
-                let spans =
-                    build_line_spans(gap_line, context.source_tree, context.source_leaf_colors);
+                // Unpaired source line: entire line is deleted.
                 rows.push(OutputRow {
                     source_line_number: Some(gap + 1),
-                    source_spans: spans,
+                    source_spans: vec![ColoredSpan {
+                        text: gap_line.text,
+                        color: SpanColor::Deleted,
+                    }],
                     destination_line_number: None,
                     destination_spans: Vec::new(),
                     is_changed: true,
@@ -219,16 +221,34 @@ fn build_output_rows<'a>(
 
         let is_changed = source_lines[source_index].text != destination_line.text;
         let is_moved = moved_destination_lines.contains(&destination_index);
-        let source_spans = build_line_spans(
-            &source_lines[source_index],
-            context.source_tree,
-            context.source_leaf_colors,
-        );
-        let destination_spans = build_line_spans(
-            destination_line,
-            context.destination_tree,
-            context.destination_leaf_colors,
-        );
+
+        // Paired identical lines: suppress all coloring so that AST
+        // mapping noise (e.g. on moved code) doesn't produce false diffs.
+        let (source_spans, destination_spans) = if is_changed {
+            (
+                build_line_spans(
+                    &source_lines[source_index],
+                    context.source_tree,
+                    context.source_leaf_colors,
+                ),
+                build_line_spans(
+                    destination_line,
+                    context.destination_tree,
+                    context.destination_leaf_colors,
+                ),
+            )
+        } else {
+            (
+                vec![ColoredSpan {
+                    text: source_lines[source_index].text,
+                    color: SpanColor::Unchanged,
+                }],
+                vec![ColoredSpan {
+                    text: destination_line.text,
+                    color: SpanColor::Unchanged,
+                }],
+            )
+        };
 
         rows.push(OutputRow {
             source_line_number: Some(source_index + 1),
@@ -248,10 +268,13 @@ fn build_output_rows<'a>(
         {
             continue;
         }
-        let spans = build_line_spans(source_line, context.source_tree, context.source_leaf_colors);
+        // Unpaired source line: entire line is deleted.
         rows.push(OutputRow {
             source_line_number: Some(source_index + 1),
-            source_spans: spans,
+            source_spans: vec![ColoredSpan {
+                text: source_line.text,
+                color: SpanColor::Deleted,
+            }],
             destination_line_number: None,
             destination_spans: Vec::new(),
             is_changed: true,
@@ -298,13 +321,17 @@ fn absent_fill(width: usize) -> String {
 
 /// Split a list of colored spans into visual lines of at most `width` columns.
 /// Each returned element is (spans, `visual_length`).
+///
+/// Uses Unicode display width so that multi-byte characters like `─` (3 bytes,
+/// 1 column) and CJK characters (3–4 bytes, 2 columns) are measured correctly.
 fn wrap_spans<'a>(spans: &[ColoredSpan<'a>], width: usize) -> Vec<(Vec<ColoredSpan<'a>>, usize)> {
     if width == 0 {
-        return vec![(spans.to_vec(), spans.iter().map(|s| s.text.len()).sum())];
+        let total: usize = spans.iter().map(|s| display_width(s.text)).sum();
+        return vec![(spans.to_vec(), total)];
     }
     let mut lines: Vec<(Vec<ColoredSpan>, usize)> = Vec::new();
     let mut current_spans: Vec<ColoredSpan> = Vec::new();
-    let mut current_len: usize = 0;
+    let mut current_len: usize = 0; // display columns
 
     for span in spans {
         let mut remaining = span.text;
@@ -315,44 +342,56 @@ fn wrap_spans<'a>(spans: &[ColoredSpan<'a>], width: usize) -> Vec<(Vec<ColoredSp
                 current_len = 0;
                 continue;
             }
-            let take = remaining.len().min(avail);
-            // Avoid splitting in the middle of a multi-byte character.
-            let take = if remaining.is_char_boundary(take) {
-                take
+            let (take_bytes, take_cols) = bytes_fitting_columns(remaining, avail);
+            if take_bytes == 0 {
+                // Character wider than available space; wrap to new line.
+                if !current_spans.is_empty() {
+                    lines.push((std::mem::take(&mut current_spans), current_len));
+                    current_len = 0;
+                }
+                let (take_bytes, take_cols) = bytes_fitting_columns(remaining, width);
+                let take_bytes = take_bytes.max(remaining.chars().next().map_or(1, char::len_utf8));
+                current_spans.push(ColoredSpan {
+                    text: &remaining[..take_bytes],
+                    color: span.color,
+                });
+                current_len += take_cols.max(1);
+                remaining = &remaining[take_bytes..];
             } else {
-                let mut t = take;
-                while t > 0 && !remaining.is_char_boundary(t) {
-                    t -= 1;
-                }
-                if t == 0 {
-                    // Single character wider than remaining space; push it
-                    // onto a new line so we make progress.
-                    if !current_spans.is_empty() {
-                        lines.push((std::mem::take(&mut current_spans), current_len));
-                        current_len = 0;
-                    }
-                    // take the full char
-                    let mut end = 1;
-                    while !remaining.is_char_boundary(end) {
-                        end += 1;
-                    }
-                    end
-                } else {
-                    t
-                }
-            };
-            current_spans.push(ColoredSpan {
-                text: &remaining[..take],
-                color: span.color,
-            });
-            current_len += take;
-            remaining = &remaining[take..];
+                current_spans.push(ColoredSpan {
+                    text: &remaining[..take_bytes],
+                    color: span.color,
+                });
+                current_len += take_cols;
+                remaining = &remaining[take_bytes..];
+            }
         }
     }
     if !current_spans.is_empty() || lines.is_empty() {
         lines.push((current_spans, current_len));
     }
     lines
+}
+
+/// Returns (byte_count, column_count) for the longest prefix of `text`
+/// that fits within `max_cols` display columns.
+fn bytes_fitting_columns(text: &str, max_cols: usize) -> (usize, usize) {
+    let mut cols = 0;
+    let mut bytes = 0;
+    for ch in text.chars() {
+        let w = ch.width().unwrap_or(0);
+        if cols + w > max_cols {
+            break;
+        }
+        cols += w;
+        bytes += ch.len_utf8();
+    }
+    (bytes, cols)
+}
+
+/// Display width of a string in terminal columns.
+fn display_width(text: &str) -> usize {
+    text.chars().map(|ch| ch.width().unwrap_or(0)).sum()
 }
 
 fn render_row(

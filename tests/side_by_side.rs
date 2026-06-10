@@ -371,3 +371,260 @@ def process(entries):
         destination_line_numbers,
     );
 }
+
+// ── Helpers for language-generic tests ──────────────────────────────────
+
+const ANSI_GREEN: &str = "\x1b[32m";
+const ANSI_RED: &str = "\x1b[31m";
+
+fn side_by_side_lang_plain(old: &str, new: &str, ext: &str) -> String {
+    colored::control::set_override(false);
+    let output = side_by_side_lang_raw(old, new, ext);
+    colored::control::unset_override();
+    output
+}
+
+fn side_by_side_lang_colored(old: &str, new: &str, ext: &str) -> String {
+    colored::control::set_override(true);
+    let output = side_by_side_lang_raw(old, new, ext);
+    colored::control::unset_override();
+    output
+}
+
+fn side_by_side_lang_raw(old: &str, new: &str, ext: &str) -> String {
+    let profile = languages::profile_for_ext(ext).expect("language profile");
+    let result = diff_sources(
+        old.as_bytes(),
+        new.as_bytes(),
+        profile,
+        &DiffOptions::default(),
+    )
+    .expect("diff failed");
+    format_side_by_side(&SideBySideInput {
+        source_bytes: old.as_bytes(),
+        destination_bytes: new.as_bytes(),
+        source_tree: &result.src_tree,
+        destination_tree: &result.dst_tree,
+        mapping: &result.mapping,
+        actions: &result.actions,
+        filename: None,
+        language_name: None,
+    })
+}
+
+/// Returns `true` if `needle` appears inside an active `color_code` span.
+fn has_color_at(text: &str, needle: &str, color_code: &str) -> bool {
+    let Some(pos) = text.find(needle) else {
+        return false;
+    };
+    let before = &text[..pos];
+    let mut last_esc: Option<usize> = None;
+    let mut s = 0;
+    while let Some(idx) = before[s..].find("\x1b[") {
+        last_esc = Some(s + idx);
+        s += idx + 1;
+    }
+    last_esc.is_some_and(|ep| before[ep..].starts_with(color_code))
+}
+
+// ── Bug-fix tests ──────────────────────────────────────────────────────
+
+/// Bug 2: Adding a single line to a TOML dependency list must not unpair
+/// every existing dependency.
+#[test]
+fn toml_single_addition_pairs_unchanged_lines() {
+    let old = "[dependencies]\ncolored = \"2\"\nserde = \"1\"\n";
+    let new = "[dependencies]\ncolored = \"2\"\nserde = \"1\"\nterminal_size = \"0.4\"\n";
+    let output = side_by_side_lang_plain(old, new, "toml");
+    let rows = parse_rows(&output);
+
+    let paired = rows
+        .iter()
+        .filter(|(l, _, r, _)| l.is_some() && r.is_some())
+        .count();
+    assert!(
+        paired >= 3,
+        "Expected at least 3 paired rows for the unchanged lines, got {paired}.\nRows: {rows:?}",
+    );
+}
+
+/// Bug 4: Inserting a line must not break pairing of its neighbours.
+#[test]
+fn inserted_line_does_not_break_neighbor_pairing() {
+    let old = "impl Foo {\n    pub fn new() -> Self {\n        Self::default()\n    }\n}\n";
+    let new =
+        "impl Foo {\n    #[must_use]\n    pub fn new() -> Self {\n        Self::default()\n    }\n}\n";
+    let output = side_by_side_lang_plain(old, new, "rs");
+    let rows = parse_rows(&output);
+
+    let new_fn_row = rows
+        .iter()
+        .find(|(_, _, _, right)| right.contains("pub fn new"))
+        .expect("should have 'pub fn new' on the right");
+    assert!(
+        new_fn_row.1.contains("pub fn new"),
+        "'pub fn new' right should pair with left, got left={:?}",
+        new_fn_row.1,
+    );
+
+    let must_use_row = rows
+        .iter()
+        .find(|(_, _, _, right)| right.contains("must_use"))
+        .expect("should have '#[must_use]' on the right");
+    assert!(
+        must_use_row.0.is_none(),
+        "'#[must_use]' should be destination-only, got left_num={:?}",
+        must_use_row.0,
+    );
+}
+
+/// Bug 1: Unpaired new lines must have their content highlighted green.
+#[test]
+fn unpaired_new_lines_are_fully_highlighted() {
+    let old = "\
+fn compute() -> usize {
+    let default = 50;
+    let content_width = default;
+    content_width
+}
+";
+    let new = "\
+fn compute() -> usize {
+    let content_width = {
+        let default = 50;
+        let chrome = 2 + 9;
+        if chrome > 0 { default - chrome } else { default }
+    };
+    content_width
+}
+";
+    let output = side_by_side_lang_colored(old, new, "rs");
+
+    // The `if chrome > 0 ...` line is completely new (no old counterpart).
+    // Even though `default` is mapped to a node in the old file, the entire
+    // unpaired line should be green.
+    for line in output.lines() {
+        let clean = strip_ansi(line);
+        if !clean.contains("if chrome > 0") {
+            continue;
+        }
+        let parts: Vec<&str> = clean.split('│').collect();
+        if parts.len() >= 4 && !parts[0].trim().is_empty() {
+            continue;
+        }
+        let right_content = line.split('│').nth(3).unwrap_or("");
+        assert!(
+            has_color_at(right_content, "default", ANSI_GREEN),
+            "Token 'default' on unpaired new line should be green.\n\
+             Right content: {right_content:?}",
+        );
+        return;
+    }
+    panic!("did not find an unpaired line containing 'if chrome > 0'");
+}
+
+/// Paired lines with identical text must NOT be colored, even when the
+/// AST matcher fails to map their internal nodes (e.g. on moved code).
+#[test]
+fn identical_paired_lines_have_no_coloring() {
+    // `greet` moves from first to third position; its body lines are
+    // identical but the AST mapper may fail to link interior nodes.
+    let old = "\
+def greet(name):
+    print(\"Hello, \" + name)
+
+def add(a, b):
+    return a + b
+";
+    let new = "\
+def add(a, b):
+    return a + b
+
+def greet(name):
+    print(\"Hello, \" + name)
+";
+    let output = side_by_side_colored(old, new);
+
+    // `print("Hello, " + name)` appears on both sides — the text is
+    // identical. No red or green should appear in that row.
+    for line in output.lines() {
+        let clean = strip_ansi(line);
+        if !clean.contains("Hello") {
+            continue;
+        }
+        let left_content = line.split('│').nth(1).unwrap_or("");
+        let right_content = line.split('│').nth(3).unwrap_or("");
+        assert!(
+            !left_content.contains(ANSI_RED) && !left_content.contains(ANSI_GREEN),
+            "Identical left line should have no red/green.\nLeft: {left_content:?}",
+        );
+        assert!(
+            !right_content.contains(ANSI_RED) && !right_content.contains(ANSI_GREEN),
+            "Identical right line should have no red/green.\nRight: {right_content:?}",
+        );
+        return;
+    }
+    panic!("did not find a line containing 'Hello'");
+}
+
+/// On a paired but changed line, gap text (keywords, brackets, semicolons)
+/// that exists on BOTH sides must NOT be colored.
+#[test]
+fn gap_text_on_changed_line_is_not_colored() {
+    let old = "\
+fn foo() {
+    let mut v: Vec<usize> = items.to_vec();
+    v
+}
+";
+    let new = "\
+fn foo() {
+    let mut v: Vec<usize> = items.clone();
+    v
+}
+";
+    let output = side_by_side_lang_colored(old, new, "rs");
+
+    // The line changed (.to_vec → .clone) but `let`, `<`, `>`, `:`, `;`
+    // are identical gap text that must NOT be red/green.
+    for line in output.lines() {
+        let clean = strip_ansi(line);
+        if !clean.contains("to_vec") {
+            continue;
+        }
+        let left_content = line.split('│').nth(1).unwrap_or("");
+        // `let` must not be red on the old side.
+        assert!(
+            !has_color_at(left_content, "let", ANSI_RED),
+            "'let' should not be red on a changed line.\nLeft: {left_content:?}",
+        );
+        return;
+    }
+    panic!("did not find a line containing 'to_vec'");
+}
+
+/// Multi-byte Unicode characters (like box-drawing `─`) must not break
+/// column alignment. The display width of `─` is 1, not its 3-byte UTF-8
+/// length.
+#[test]
+fn unicode_box_drawing_does_not_break_layout() {
+    let old = "fn sep() {\n    let s = \"─┼─\";\n    s\n}\n";
+    let new = "fn sep() {\n    let s = \"A┼B\";\n    s\n}\n";
+    let output = side_by_side_lang_plain(old, new, "rs");
+
+    // Every row with a separator │ must have exactly 4 columns.
+    for line in output.lines() {
+        if !line.contains('│') {
+            continue;
+        }
+        let clean = strip_ansi(line);
+        let cols: Vec<&str> = clean.split('│').collect();
+        assert_eq!(
+            cols.len(),
+            4,
+            "Every row should have 4 columns (3 separators), got {}.\nLine: {:?}",
+            cols.len(),
+            clean,
+        );
+    }
+}

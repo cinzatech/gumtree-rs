@@ -88,7 +88,7 @@ pub fn build_line_pairing<'a>(
         mapping,
     );
     let (result, used_source_lines) =
-        phase2_interpolate(candidates, source_lines, destination_lines);
+        phase2_text_match(candidates, source_lines, destination_lines);
     let dst_to_src = phase3_blanks(result, used_source_lines, source_lines, destination_lines);
     let moved_dst_lines = detect_moved_destination_lines(&dst_to_src, destination_lines.len());
     LinePairing {
@@ -97,7 +97,7 @@ pub fn build_line_pairing<'a>(
     }
 }
 
-/// Phase 1: vote using identifier nodes weighted by inverse label frequency.
+/// Phase 1: vote using unique leaf nodes weighted by inverse label frequency.
 fn phase1_vote<'a>(
     source_lines: &[FileLine<'a>],
     destination_lines: &[FileLine<'a>],
@@ -107,7 +107,7 @@ fn phase1_vote<'a>(
 ) -> Vec<(usize, usize, f64)> {
     let destination_label_frequency: HashMap<&str, usize> = destination_tree
         .all_nodes()
-        .filter(|n| n.children.is_empty() && n.kind == "identifier")
+        .filter(|n| n.children.is_empty())
         .fold(HashMap::new(), |mut acc, n| {
             *acc.entry(n.label.as_str()).or_insert(0) += 1;
             acc
@@ -116,7 +116,7 @@ fn phase1_vote<'a>(
     let mut weighted_votes: HashMap<usize, HashMap<usize, f64>> = HashMap::new();
 
     for destination_node in destination_tree.all_nodes() {
-        if !destination_node.children.is_empty() || destination_node.kind != "identifier" {
+        if !destination_node.children.is_empty() {
             continue;
         }
         let frequency = destination_label_frequency
@@ -160,12 +160,9 @@ fn phase1_vote<'a>(
     candidates
 }
 
-/// Phase 2: fill gaps by proximity interpolation.
-///
-/// Uses a single forward sweep followed by a backward sweep to fill gaps in
-/// O(n), replacing the previous `while changed` fixed-point loop that was
-/// O(n²) in the worst case.
-fn phase2_interpolate(
+/// Phase 2: fill gaps between anchors by matching lines with identical text,
+/// then pair remaining lines positionally.
+fn phase2_text_match(
     candidates: Vec<(usize, usize, f64)>,
     source_lines: &[FileLine],
     destination_lines: &[FileLine],
@@ -184,87 +181,62 @@ fn phase2_interpolate(
     let dst_count = destination_lines.len();
     let src_count = source_lines.len();
 
-    // Precompute next_below[d] = nearest initially-mapped destination line
-    // strictly after d, so the forward sweep can look ahead in O(1).
-    let mut next_below: Vec<Option<(usize, usize)>> = vec![None; dst_count];
-    {
-        let mut upcoming: Option<(usize, usize)> = None;
-        for d in (0..dst_count).rev() {
-            next_below[d] = upcoming;
-            if let Some(&s) = result.get(&d) {
-                upcoming = Some((d, s));
+    // Collect anchors sorted by destination index to define gap boundaries.
+    let mut anchors: Vec<(usize, usize)> = result.iter().map(|(&d, &s)| (d, s)).collect();
+    anchors.sort_by_key(|&(d, _)| d);
+
+    let mut gaps: Vec<(usize, usize, usize, usize)> = Vec::new();
+    if anchors.is_empty() {
+        gaps.push((0, dst_count, 0, src_count));
+    } else {
+        let (fd, fs) = anchors[0];
+        if fd > 0 || fs > 0 {
+            gaps.push((0, fd, 0, fs));
+        }
+        for w in anchors.windows(2) {
+            let (d1, s1) = w[0];
+            let (d2, s2) = w[1];
+            if s1 < s2 {
+                gaps.push((d1 + 1, d2, s1 + 1, s2));
             }
+        }
+        let (ld, ls) = *anchors.last().unwrap();
+        if ld + 1 < dst_count || ls + 1 < src_count {
+            gaps.push((ld + 1, dst_count, ls + 1, src_count));
         }
     }
 
-    // Forward sweep: handles between-anchor interpolation (Case 1) and
-    // forward edge extension (Case 2).  Tracks `last_mapped` incrementally
-    // so each fill chains into the next without rescanning.
-    let mut last_mapped: Option<(usize, usize)> = None;
-    let mut first_mapped: Option<usize> = None;
-    for d in 0..dst_count {
-        if result.contains_key(&d) {
-            if first_mapped.is_none() {
-                first_mapped = Some(d);
+    for (dst_from, dst_to, src_from, src_to) in gaps {
+        let mut available: Vec<usize> = (src_from..src_to)
+            .filter(|s| !used_source_lines.contains(s))
+            .collect();
+
+        // First pass: match by identical text.
+        let unmatched_dst: Vec<usize> = (dst_from..dst_to)
+            .filter(|d| !result.contains_key(d))
+            .collect();
+        for &d in &unmatched_dst {
+            let text = destination_lines[d].text;
+            if let Some(pos) = available.iter().position(|&s| source_lines[s].text == text) {
+                let s = available.remove(pos);
+                result.insert(d, s);
+                used_source_lines.insert(s);
             }
-            last_mapped = Some((d, result[&d]));
-            continue;
         }
 
-        let above = last_mapped;
-        let below = next_below[d];
-
-        let inferred_source = match (above, below) {
-            (Some((above_dst, above_src)), Some((_below_dst, below_src)))
-                if above_src < below_src =>
-            {
-                let offset = d - above_dst;
-                let candidate = above_src + offset;
-                (candidate < below_src && candidate < src_count).then_some(candidate)
+        // Second pass: pair remaining unmatched lines positionally.
+        let remaining_src: Vec<usize> = available
+            .into_iter()
+            .filter(|s| !used_source_lines.contains(s))
+            .collect();
+        let mut src_iter = remaining_src.into_iter();
+        for d in dst_from..dst_to {
+            if result.contains_key(&d) {
+                continue;
             }
-            (Some((above_dst, above_src)), _) => {
-                let offset = d - above_dst;
-                let candidate = above_src + offset;
-                (candidate < src_count && offset <= 1).then_some(candidate)
-            }
-            // Case 3 during forward sweep: only for the line immediately
-            // before the first anchor (offset == 1).
-            (None, Some((below_dst, below_src))) => {
-                let offset = below_dst - d;
-                (below_src >= offset && offset <= 1).then_some(below_src - offset)
-            }
-            _ => None,
-        };
-
-        if let Some(source_line) = inferred_source {
-            if !used_source_lines.contains(&source_line) {
-                result.insert(d, source_line);
-                used_source_lines.insert(source_line);
-                last_mapped = Some((d, source_line));
-                if first_mapped.is_none() {
-                    first_mapped = Some(d);
-                }
-            }
-        }
-    }
-
-    // Backward sweep: extends from the earliest mapped line toward the start.
-    // Only lines before the first mapped line lack an "above" anchor, so only
-    // they can benefit from Case 3 (below-only, offset <= 1) chaining.
-    if let Some(first) = first_mapped {
-        let mut next_anchor: Option<(usize, usize)> = Some((first, result[&first]));
-        for d in (0..first).rev() {
-            if let Some((below_dst, below_src)) = next_anchor {
-                let offset = below_dst - d;
-                if below_src >= offset && offset <= 1 {
-                    let candidate = below_src - offset;
-                    if !used_source_lines.contains(&candidate) {
-                        result.insert(d, candidate);
-                        used_source_lines.insert(candidate);
-                        next_anchor = Some((d, candidate));
-                    }
-                }
-            }
+            let Some(s) = src_iter.next() else { break };
+            result.insert(d, s);
+            used_source_lines.insert(s);
         }
     }
 
