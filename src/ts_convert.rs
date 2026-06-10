@@ -44,8 +44,8 @@ fn add_node(
     let has_kept_child = {
         let mut cursor = ts_node.walk();
         let result = ts_node
-            .named_children(&mut cursor)
-            .any(|child| profile.keep(child.kind(), child.is_named()));
+            .children(&mut cursor)
+            .any(|child| profile.keep(child.kind(), child.is_named()) || child.child_count() == 0);
         result
     };
     let label = if profile.label(kind, !has_kept_child) {
@@ -62,15 +62,18 @@ fn add_node(
     )
 }
 
-/// Returns the kept named children of a tree-sitter node, in order.
+/// Returns the kept children of a tree-sitter node, in order.
+///
+/// Includes named nodes per the profile AND anonymous leaf tokens
+/// (keywords, operators, punctuation) so they participate in matching
+/// and receive proper Inserted/Deleted/Updated coloring.
 fn collect_kept_children<'a>(
     ts_node: &TSNode<'a>,
     profile: &dyn LanguageProfile,
 ) -> Vec<TSNode<'a>> {
     let mut cursor = ts_node.walk();
-    let children: Vec<TSNode<'a>> = ts_node
-        .named_children(&mut cursor)
-        .filter(|child| profile.keep(child.kind(), child.is_named()))
-        .collect();
-    children
+    ts_node
+        .children(&mut cursor)
+        .filter(|child| profile.keep(child.kind(), child.is_named()) || child.child_count() == 0)
+        .collect()
 }

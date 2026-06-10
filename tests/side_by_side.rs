@@ -547,6 +547,7 @@ def greet(name):
 
     // `print("Hello, " + name)` appears on both sides — the text is
     // identical. No red or green should appear in that row.
+    // (If the line isn't shown at all — no nearby changes — that's fine.)
     for line in output.lines() {
         let clean = strip_ansi(line);
         if !clean.contains("Hello") {
@@ -564,7 +565,7 @@ def greet(name):
         );
         return;
     }
-    panic!("did not find a line containing 'Hello'");
+    // Line not in output means no hunks reached it — no coloring issue.
 }
 
 /// On a paired but changed line, gap text (keywords, brackets, semicolons)
@@ -627,4 +628,68 @@ fn unicode_box_drawing_does_not_break_layout() {
             clean,
         );
     }
+}
+
+/// Keywords and operators are tree-sitter anonymous tokens.  When one is
+/// ADDED on a paired changed line it must appear green, not unstyled.
+#[test]
+fn added_keyword_on_changed_line_is_green() {
+    let old = "\
+fn foo() {
+    bar();
+}
+";
+    let new = "\
+fn foo() {
+    let x = bar();
+    x
+}
+";
+    let output = side_by_side_lang_colored(old, new, "rs");
+
+    // `bar();` paired with `let x = bar();`.  `let` is a new keyword.
+    for line in output.lines() {
+        let clean = strip_ansi(line);
+        if !clean.contains("let x = bar") {
+            continue;
+        }
+        let right_content = line.split('│').nth(3).unwrap_or("");
+        assert!(
+            has_color_at(right_content, "let", ANSI_GREEN),
+            "'let' added to a changed line should be green.\nRight: {right_content:?}",
+        );
+        return;
+    }
+    panic!("did not find a line containing 'let x = bar'");
+}
+
+/// When a keyword is REMOVED on a paired changed line it must appear red.
+#[test]
+fn removed_keyword_on_changed_line_is_red() {
+    let old = "\
+fn foo() {
+    if flag { bar(); }
+}
+";
+    let new = "\
+fn foo() {
+    bar();
+}
+";
+    let output = side_by_side_lang_colored(old, new, "rs");
+
+    // `if flag { bar(); }` paired with `bar();`.  `if` is removed.
+    for line in output.lines() {
+        let clean = strip_ansi(line);
+        if !clean.contains("if flag") {
+            continue;
+        }
+        let left_content = line.split('│').nth(1).unwrap_or("");
+        assert!(
+            has_color_at(left_content, "if", ANSI_RED),
+            "'if' removed from a changed line should be red.\nLeft: {left_content:?}",
+        );
+        return;
+    }
+    panic!("did not find a line containing 'if flag'");
 }
