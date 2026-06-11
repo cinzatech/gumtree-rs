@@ -2,7 +2,7 @@
 //!
 //! Colors are applied per AST span, not per line:
 //!
-//! * **Cyan** line numbers: the line belongs to a moved block.
+//! * **Yellow** line numbers: the line belongs to a moved block.
 //! * **Red** spans on the left: deleted tokens.
 //! * **Green** spans on the right: inserted tokens.
 //! * **Yellow** spans on both sides: updated (label-changed) tokens.
@@ -12,7 +12,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use colored::Colorize;
+use owo_colors::OwoColorize;
 use unicode_width::UnicodeWidthChar;
 
 use crate::actions::Action;
@@ -264,7 +264,11 @@ fn build_output_rows<'a>(
 
 fn extract_hunks(rows: &[OutputRow], context: usize) -> Vec<(usize, usize)> {
     let mut ranges: Vec<(usize, usize)> = Vec::new();
-    for (i, _) in rows.iter().enumerate().filter(|(_, r)| r.is_changed) {
+    let displayed = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.is_changed || r.is_moved);
+    for (i, _) in displayed {
         let start = i.saturating_sub(context);
         let end = (i + context + 1).min(rows.len());
         if let Some(last) = ranges.last_mut() {
@@ -371,7 +375,7 @@ fn display_width(text: &str) -> usize {
     text.chars().map(|ch| ch.width().unwrap_or(0)).sum()
 }
 
-/// Formats one line-number cell: right-aligned and dimmed (or cyan when the
+/// Formats one line-number cell: right-aligned and dimmed (or yellow when the
 /// row is moved) on the first visual line, blank on wrapped continuation
 /// lines or when the side has no line.
 fn number_cell(number: Option<usize>, visual_index: usize, is_moved: bool, width: usize) -> String {
@@ -379,7 +383,7 @@ fn number_cell(number: Option<usize>, visual_index: usize, is_moved: bool, width
         Some(n) if visual_index == 0 => {
             let cell = format!("{n:>width$}");
             if is_moved {
-                cell.cyan().to_string()
+                cell.yellow().to_string()
             } else {
                 cell.dimmed().to_string()
             }
@@ -394,18 +398,8 @@ fn render_row(
     content_width: usize,
     output: &mut String,
 ) {
-    let left_visual_lines = if row.source_line_number.is_none() {
-        // No source line: fill with • for each visual line on the right.
-        vec![]
-    } else {
-        wrap_spans(&row.source_spans, content_width)
-    };
-
-    let right_visual_lines = if row.destination_line_number.is_none() {
-        vec![]
-    } else {
-        wrap_spans(&row.destination_spans, content_width)
-    };
+    let left_visual_lines = wrap_spans(&row.source_spans, content_width);
+    let right_visual_lines = wrap_spans(&row.destination_spans, content_width);
 
     let num_visual = left_visual_lines.len().max(right_visual_lines.len()).max(1);
     let separator = "│".dimmed();
@@ -433,7 +427,7 @@ fn render_row(
 
         // Right content.
         let right_content = if row.destination_line_number.is_none() {
-            absent_fill(content_width).clone()
+            absent_fill(content_width)
         } else if let Some((ref spans, _)) = right_visual_lines.get(v) {
             render_spans(spans)
         } else {
@@ -466,35 +460,55 @@ impl DiffFormatter for TerminalFormatter {
             destination_tree: &input.result.dst_tree,
             mapping: &input.result.mapping,
             actions: &input.result.actions,
-            filename: input.filename,
+            source_filename: input.source_filename,
+            destination_filename: input.destination_filename,
             language_name: input.language_name,
         })
     }
 }
 
-/// Render a file-info header line (filename and detected language).
+/// Builds one header cell: bold filename plus a cyan `[Language]` tag,
+/// padded to `width` columns (filename truncated when needed).
+fn header_cell(filename: Option<&str>, language_name: Option<&str>, width: usize) -> String {
+    let tag: String = language_name
+        .map(|language| format!("[{language}]"))
+        .unwrap_or_default()
+        .chars()
+        .take(width)
+        .collect();
+    let gap = usize::from(filename.is_some() && !tag.is_empty());
+    let name_budget = width.saturating_sub(tag.chars().count() + gap);
+    let name: String = filename.unwrap_or("").chars().take(name_budget).collect();
+    let used = name.chars().count() + gap + tag.chars().count();
+    format!(
+        "{}{}{}{}",
+        name.bold(),
+        " ".repeat(gap),
+        tag.cyan(),
+        " ".repeat(width.saturating_sub(used)),
+    )
+}
+
+/// Renders the file-info header as a regular row of the side-by-side layout
+/// (blank number cells, one filename per side), so the column separators run
+/// through it and the `┼` intersections of the rule below connect cleanly.
 fn render_file_header(
-    filename: Option<&str>,
+    source_filename: Option<&str>,
+    destination_filename: Option<&str>,
     language_name: Option<&str>,
     line_number_width: usize,
     content_width: usize,
     output: &mut String,
 ) {
-    let label = match (filename, language_name) {
-        (Some(f), Some(l)) => format!("{f} [{l}]"),
-        (Some(f), None) => f.to_string(),
-        (None, Some(l)) => format!("[{l}]"),
-        (None, None) => return,
-    };
-    // Total width: line_num + " │ " + content + " │ " + line_num + " │ " + content
-    let total_width =
-        line_number_width + 3 + content_width + 3 + line_number_width + 3 + content_width;
-    let padded = if label.len() < total_width {
-        format!(" {}{}", label, " ".repeat(total_width - label.len() - 1))
-    } else {
-        format!(" {}", &label[..total_width - 1])
-    };
-    writeln!(output, "{}", padded.bold().dimmed()).unwrap();
+    let separator = "│".dimmed();
+    let number_blank = " ".repeat(line_number_width);
+    let left = header_cell(source_filename, language_name, content_width);
+    let right = header_cell(destination_filename, language_name, content_width);
+    writeln!(
+        output,
+        "{number_blank} {separator} {left} {separator} {number_blank} {separator} {right}",
+    )
+    .unwrap();
 }
 
 /// All inputs needed to produce a side-by-side diff.
@@ -505,7 +519,8 @@ pub struct SideBySideInput<'a> {
     pub destination_tree: &'a Tree,
     pub mapping: &'a Mapping,
     pub actions: &'a [Action],
-    pub filename: Option<&'a str>,
+    pub source_filename: Option<&'a str>,
+    pub destination_filename: Option<&'a str>,
     pub language_name: Option<&'a str>,
 }
 
@@ -519,8 +534,10 @@ pub fn format_side_by_side(input: &SideBySideInput) -> String {
         ..
     } = *input;
 
-    let source_lines = split_into_lines(input.source_bytes);
-    let destination_lines = split_into_lines(input.destination_bytes);
+    let source_text = String::from_utf8_lossy(input.source_bytes);
+    let destination_text = String::from_utf8_lossy(input.destination_bytes);
+    let source_lines = split_into_lines(&source_text);
+    let destination_lines = split_into_lines(&destination_text);
 
     let pairing = build_line_pairing(
         &source_lines,
@@ -584,9 +601,13 @@ pub fn format_side_by_side(input: &SideBySideInput) -> String {
     };
 
     let mut output = String::new();
-    if input.filename.is_some() || input.language_name.is_some() {
+    if input.source_filename.is_some()
+        || input.destination_filename.is_some()
+        || input.language_name.is_some()
+    {
         render_file_header(
-            input.filename,
+            input.source_filename,
+            input.destination_filename,
             input.language_name,
             line_number_width,
             content_width,

@@ -16,8 +16,10 @@ pub struct FormatInput<'a> {
     pub source_bytes: &'a [u8],
     pub destination_bytes: &'a [u8],
     pub result: &'a DiffResult,
-    /// Original file path, shown in the side-by-side header.
-    pub filename: Option<&'a str>,
+    /// Original path of the old file, shown on the left of the header.
+    pub source_filename: Option<&'a str>,
+    /// Original path of the new file, shown on the right of the header.
+    pub destination_filename: Option<&'a str>,
     /// Detected language name, shown in the side-by-side header.
     pub language_name: Option<&'a str>,
 }
@@ -25,6 +27,28 @@ pub struct FormatInput<'a> {
 /// Common interface implemented by every output format.
 pub trait DiffFormatter {
     fn format(input: &FormatInput) -> String;
+}
+
+/// Removes ANSI escape sequences (`ESC [ ... m`) from a string.
+///
+/// Formatters always emit styled output; callers that need plain text
+/// (non-terminal stdout, tests) strip the styling at the edge.
+#[must_use]
+pub fn strip_ansi(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut in_escape = false;
+    for ch in input.chars() {
+        if ch == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if ch == 'm' {
+                in_escape = false;
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 /// Returns the GumTree-style display string for a node.

@@ -2,10 +2,10 @@
 /// normalised by the length of the longer string. Two empty strings score 1.0.
 #[must_use]
 pub fn normalised_similarity(left: &str, right: &str) -> f64 {
-    let max_length = left.len().max(right.len());
-    if max_length == 0 {
+    if left == right {
         return 1.0;
     }
+    let max_length = left.len().max(right.len());
     let distance = levenshtein_distance(left, right);
     1.0 - (distance as f64 / max_length as f64)
 }

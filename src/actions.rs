@@ -92,10 +92,7 @@ pub fn generate_actions(
             .parent
             .expect("non-root has a parent");
         let position = destination_tree
-            .node(parent)
-            .children
-            .iter()
-            .position(|&child_id| child_id == destination_node)
+            .position_in_parent(destination_node)
             .expect("node must be in its parent's children");
 
         if !mapping.has_dst(destination_node) {

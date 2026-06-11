@@ -118,7 +118,7 @@ simple_profile!(ZigProfile, tree_sitter_zig::LANGUAGE);
 // ---------------------------------------------------------------------------
 
 macro_rules! define_languages {
-    ( $( $static_name:ident : $profile_ty:ident => [ $( $ext:literal ),+ ] ; )* ) => {
+    ( $( $static_name:ident : $profile_ty:ident, $display:literal => [ $( $ext:literal ),+ ] ; )* ) => {
         /// Return a `&dyn LanguageProfile` for a file extension (without the
         /// leading dot), or `None` if the extension is not recognised.
         pub fn profile_for_ext(ext: &str) -> Option<&'static dyn LanguageProfile> {
@@ -139,7 +139,7 @@ macro_rules! define_languages {
         /// `None` if the extension is not recognised.
         pub fn language_name_for_ext(ext: &str) -> Option<&'static str> {
             match ext {
-                $( $( $ext )|+ => Some(stringify!($static_name)), )*
+                $( $( $ext )|+ => Some($display), )*
                 _ => None,
             }
         }
@@ -147,69 +147,69 @@ macro_rules! define_languages {
 }
 
 define_languages! {
-    AGDA:       AgdaProfile              => ["agda"];
-    BASH:       BashProfile              => ["sh", "bash", "zsh"];
-    C:          CProfile                 => ["c", "h"];
-    CMAKE:      CmakeProfile             => ["cmake"];
-    COMMONLISP: CommonLispProfile        => ["cl", "lisp", "lsp", "asd"];
-    CPP:        CppProfile               => ["cc", "cpp", "cxx", "hpp", "hxx", "hh"];
-    CSHARP:     CSharpProfile            => ["cs"];
-    CSS:        CssProfile               => ["css"];
-    DART:       DartProfile              => ["dart"];
-    DOCKERFILE: DockerfileProfile        => ["dockerfile"];
-    DTD:        DtdProfile               => ["dtd"];
-    ELIXIR:     ElixirProfile            => ["ex", "exs"];
-    ELM:        ElmProfile               => ["elm"];
-    ERB:        EmbeddedTemplateProfile  => ["erb", "ejs"];
-    ERLANG:     ErlangProfile            => ["erl", "hrl"];
-    FORTRAN:    FortranProfile           => ["f", "f90", "f95", "f03", "f08", "for", "fpp"];
-    GDSCRIPT:   GdScriptProfile          => ["gd"];
-    GLSL:       GlslProfile              => ["glsl", "vert", "frag", "geom", "comp"];
-    GO:         GoProfile                => ["go"];
-    GRAPHQL:    GraphqlProfile           => ["graphql", "gql"];
-    GROOVY:     GroovyProfile            => ["groovy", "gradle"];
-    HASKELL:    HaskellProfile           => ["hs", "lhs"];
-    HCL:        HclProfile               => ["hcl", "tf", "tfvars"];
-    HTML:       HtmlProfile              => ["html", "htm"];
-    JAVA:       JavaProfile              => ["java"];
-    JS:         JavaScriptProfile        => ["js", "mjs", "cjs", "jsx"];
-    JSDOC:      JsDocProfile             => ["jsdoc"];
-    JSON:       JsonProfile              => ["json"];
-    JULIA:      JuliaProfile             => ["jl"];
-    KOTLIN:     KotlinProfile            => ["kt", "kts"];
-    LATEX:      LatexProfile             => ["tex", "latex", "sty", "cls"];
-    LUA:        LuaProfile               => ["lua"];
-    MAKE:       MakeProfile              => ["mk"];
-    MARKDOWN:   MarkdownProfile          => ["md", "markdown"];
-    NGINX:      NginxProfile             => ["nginx"];
-    NIX:        NixProfile               => ["nix"];
-    OBJC:       ObjectiveCProfile        => ["objc"];
-    OCAML:      OcamlProfile             => ["ml"];
-    OCAML_IF:   OcamlInterfaceProfile    => ["mli"];
-    PASCAL:     PascalProfile            => ["pas", "pp", "lpr", "dpr"];
-    PERL:       PerlProfile              => ["pl", "pm"];
-    PHP:        PhpProfile               => ["php"];
-    POWERSHELL: PowerShellProfile        => ["ps1", "psm1", "psd1"];
-    PROLOG:     PrologProfile            => ["pro", "P", "prolog"];
-    PROTO:      ProtoProfile             => ["proto"];
-    PYTHON:     PythonProfile            => ["py", "pyi"];
-    R:          RProfile                 => ["r", "R"];
-    RACKET:     RacketProfile            => ["rkt"];
-    REGEX:      RegexProfile             => ["regex"];
-    RUBY:       RubyProfile              => ["rb"];
-    RUST:       RustProfile              => ["rs"];
-    SCALA:      ScalaProfile             => ["scala", "sc"];
-    SCHEME:     SchemeProfile            => ["scm", "ss"];
-    SOLIDITY:   SolidityProfile          => ["sol"];
-    SQL:        SqlProfile               => ["sql"];
-    SWIFT:      SwiftProfile             => ["swift"];
-    TOML:       TomlProfile              => ["toml"];
-    TS:         TypeScriptProfile        => ["ts", "mts", "cts"];
-    TSX:        TsxProfile               => ["tsx"];
-    VERILOG:    VerilogProfile           => ["v", "sv", "svh"];
-    XML:        XmlProfile               => ["xml", "xsl", "xslt", "xsd", "svg", "plist"];
-    YAML:       YamlProfile              => ["yaml", "yml"];
-    ZIG:        ZigProfile               => ["zig"];
+    AGDA:       AgdaProfile              , "Agda" => ["agda"];
+    BASH:       BashProfile              , "Bash" => ["sh", "bash", "zsh"];
+    C:          CProfile                 , "C" => ["c", "h"];
+    CMAKE:      CmakeProfile             , "CMake" => ["cmake"];
+    COMMONLISP: CommonLispProfile        , "Common Lisp" => ["cl", "lisp", "lsp", "asd"];
+    CPP:        CppProfile               , "C++" => ["cc", "cpp", "cxx", "hpp", "hxx", "hh"];
+    CSHARP:     CSharpProfile            , "C#" => ["cs"];
+    CSS:        CssProfile               , "CSS" => ["css"];
+    DART:       DartProfile              , "Dart" => ["dart"];
+    DOCKERFILE: DockerfileProfile        , "Dockerfile" => ["dockerfile"];
+    DTD:        DtdProfile               , "DTD" => ["dtd"];
+    ELIXIR:     ElixirProfile            , "Elixir" => ["ex", "exs"];
+    ELM:        ElmProfile               , "Elm" => ["elm"];
+    ERB:        EmbeddedTemplateProfile  , "ERB" => ["erb", "ejs"];
+    ERLANG:     ErlangProfile            , "Erlang" => ["erl", "hrl"];
+    FORTRAN:    FortranProfile           , "Fortran" => ["f", "f90", "f95", "f03", "f08", "for", "fpp"];
+    GDSCRIPT:   GdScriptProfile          , "GDScript" => ["gd"];
+    GLSL:       GlslProfile              , "GLSL" => ["glsl", "vert", "frag", "geom", "comp"];
+    GO:         GoProfile                , "Go" => ["go"];
+    GRAPHQL:    GraphqlProfile           , "GraphQL" => ["graphql", "gql"];
+    GROOVY:     GroovyProfile            , "Groovy" => ["groovy", "gradle"];
+    HASKELL:    HaskellProfile           , "Haskell" => ["hs", "lhs"];
+    HCL:        HclProfile               , "HCL" => ["hcl", "tf", "tfvars"];
+    HTML:       HtmlProfile              , "HTML" => ["html", "htm"];
+    JAVA:       JavaProfile              , "Java" => ["java"];
+    JS:         JavaScriptProfile        , "JavaScript" => ["js", "mjs", "cjs", "jsx"];
+    JSDOC:      JsDocProfile             , "JSDoc" => ["jsdoc"];
+    JSON:       JsonProfile              , "JSON" => ["json"];
+    JULIA:      JuliaProfile             , "Julia" => ["jl"];
+    KOTLIN:     KotlinProfile            , "Kotlin" => ["kt", "kts"];
+    LATEX:      LatexProfile             , "LaTeX" => ["tex", "latex", "sty", "cls"];
+    LUA:        LuaProfile               , "Lua" => ["lua"];
+    MAKE:       MakeProfile              , "Make" => ["mk"];
+    MARKDOWN:   MarkdownProfile          , "Markdown" => ["md", "markdown"];
+    NGINX:      NginxProfile             , "Nginx" => ["nginx"];
+    NIX:        NixProfile               , "Nix" => ["nix"];
+    OBJC:       ObjectiveCProfile        , "Objective-C" => ["objc"];
+    OCAML:      OcamlProfile             , "OCaml" => ["ml"];
+    OCAML_IF:   OcamlInterfaceProfile    , "OCaml Interface" => ["mli"];
+    PASCAL:     PascalProfile            , "Pascal" => ["pas", "pp", "lpr", "dpr"];
+    PERL:       PerlProfile              , "Perl" => ["pl", "pm"];
+    PHP:        PhpProfile               , "PHP" => ["php"];
+    POWERSHELL: PowerShellProfile        , "PowerShell" => ["ps1", "psm1", "psd1"];
+    PROLOG:     PrologProfile            , "Prolog" => ["pro", "P", "prolog"];
+    PROTO:      ProtoProfile             , "Protocol Buffers" => ["proto"];
+    PYTHON:     PythonProfile            , "Python" => ["py", "pyi"];
+    R:          RProfile                 , "R" => ["r", "R"];
+    RACKET:     RacketProfile            , "Racket" => ["rkt"];
+    REGEX:      RegexProfile             , "Regex" => ["regex"];
+    RUBY:       RubyProfile              , "Ruby" => ["rb"];
+    RUST:       RustProfile              , "Rust" => ["rs"];
+    SCALA:      ScalaProfile             , "Scala" => ["scala", "sc"];
+    SCHEME:     SchemeProfile            , "Scheme" => ["scm", "ss"];
+    SOLIDITY:   SolidityProfile          , "Solidity" => ["sol"];
+    SQL:        SqlProfile               , "SQL" => ["sql"];
+    SWIFT:      SwiftProfile             , "Swift" => ["swift"];
+    TOML:       TomlProfile              , "TOML" => ["toml"];
+    TS:         TypeScriptProfile        , "TypeScript" => ["ts", "mts", "cts"];
+    TSX:        TsxProfile               , "TSX" => ["tsx"];
+    VERILOG:    VerilogProfile           , "Verilog" => ["v", "sv", "svh"];
+    XML:        XmlProfile               , "XML" => ["xml", "xsl", "xslt", "xsd", "svg", "plist"];
+    YAML:       YamlProfile              , "YAML" => ["yaml", "yml"];
+    ZIG:        ZigProfile               , "Zig" => ["zig"];
 }
 
 /// Look up a profile by **filename** (e.g. `Dockerfile`, `Makefile`).

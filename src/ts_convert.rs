@@ -83,6 +83,8 @@ fn collect_kept_children<'a>(
 /// Whether the node has at least one named child kept by the profile.
 fn has_kept_named_child(ts_node: &TSNode, profile: &dyn LanguageProfile) -> bool {
     let mut cursor = ts_node.walk();
+    // The intermediate binding is required: the iterator borrows `cursor`,
+    // and a tail expression would drop it after the local variable.
     let result = ts_node
         .named_children(&mut cursor)
         .any(|child| profile.keep(child.kind(), child.is_named()));

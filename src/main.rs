@@ -11,13 +11,14 @@
 
 use std::env;
 use std::fs;
+use std::io::IsTerminal;
 use std::path::Path;
 use std::process::ExitCode;
 
 use diffame::output::json::JsonFormatter;
 use diffame::output::terminal::TerminalFormatter;
 use diffame::output::text::TextFormatter;
-use diffame::output::{DiffFormatter, FormatInput};
+use diffame::output::{strip_ansi, DiffFormatter, FormatInput};
 use diffame::{diff_lines, diff_sources, languages, DiffOptions};
 
 fn main() -> ExitCode {
@@ -71,20 +72,38 @@ fn main() -> ExitCode {
         }
     }
 
-    // Resolve old_path, new_path, and the path used for language detection.
+    // Resolve old_path, new_path, the path used for language detection, and
+    // the per-side display names shown in the header.
     //
     // Two accepted forms:
     //   diffame <old> <new>                                       (direct)
     //   diffame <path> <old-file> <old-hex> <old-mode>            (git diff.external)
     //           <new-file> <new-hex> <new-mode>
-    let (old_path, new_path, lang_path): (&str, &str, &str) = match positional.len() {
-        2 => (positional[0], positional[1], positional[0]),
-        7 => (positional[1], positional[4], positional[0]),
-        _ => {
-            print_usage(args.first().map_or("diffame", String::as_str));
-            return ExitCode::from(2);
-        }
-    };
+    //
+    // In the git form both sides are versions of the same logical path, and
+    // the actual files are temporary blobs, so the logical path is displayed
+    // on both sides.
+    let (old_path, new_path, lang_path, old_display, new_display): (&str, &str, &str, &str, &str) =
+        match positional.len() {
+            2 => (
+                positional[0],
+                positional[1],
+                positional[0],
+                positional[0],
+                positional[1],
+            ),
+            7 => (
+                positional[1],
+                positional[4],
+                positional[0],
+                positional[0],
+                positional[0],
+            ),
+            _ => {
+                print_usage(args.first().map_or("diffame", String::as_str));
+                return ExitCode::from(2);
+            }
+        };
 
     // Determine the language extension to use.
     let ext = lang_override.unwrap_or_else(|| {
@@ -145,7 +164,8 @@ fn main() -> ExitCode {
         source_bytes: &old_src,
         destination_bytes: &new_src,
         result: &result,
-        filename: Some(lang_path),
+        source_filename: Some(old_display),
+        destination_filename: Some(new_display),
         language_name: lang_name,
     };
 
@@ -153,8 +173,14 @@ fn main() -> ExitCode {
         let output = JsonFormatter::format(&input);
         println!("{output}");
     } else if format.eq_ignore_ascii_case("SIDE") {
+        // The formatter is a pure function that always emits ANSI styling;
+        // whether the styling survives is decided once, here at the edge.
         let output = TerminalFormatter::format(&input);
-        print!("{output}");
+        if color_enabled() {
+            print!("{output}");
+        } else {
+            print!("{}", strip_ansi(&output));
+        }
     } else {
         let output = TextFormatter::format(&input);
         print!("{output}");
@@ -163,12 +189,25 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Whether colored output should reach stdout, following the common
+/// conventions: `NO_COLOR` disables, `CLICOLOR_FORCE` (non-`"0"`) forces,
+/// otherwise color is used only when stdout is a terminal.
+fn color_enabled() -> bool {
+    if env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()) {
+        return false;
+    }
+    if env::var_os("CLICOLOR_FORCE").is_some_and(|value| value != "0") {
+        return true;
+    }
+    std::io::stdout().is_terminal()
+}
+
 fn print_usage(progname: &str) {
     eprintln!("usage: {progname} <old-file> <new-file> [-f JSON|TEXT|SIDE] [-l EXT]");
     eprintln!();
     eprintln!("  Also accepts git's 7-argument diff.external invocation.");
     eprintln!();
-    eprintln!("  -f FORMAT          output format: TEXT (default), JSON, or SIDE");
+    eprintln!("  -f FORMAT          output format: SIDE (default), JSON, or TEXT");
     eprintln!("  -l EXT             override language (e.g. rs, py, js)");
     eprintln!(
         "  --max-file-size N  max input file size in bytes (default: 104857600, 0 = no limit)"

@@ -7,29 +7,30 @@
 use std::collections::HashSet;
 
 use diffame::languages;
+use diffame::output::strip_ansi;
 use diffame::side_by_side::{format_side_by_side, SideBySideInput};
 use diffame::{diff_sources, DiffOptions};
 
 /// Helper: diff two Python snippets and return the side-by-side output with
 /// ANSI colors stripped.
+///
+/// The formatter is a pure function that always emits ANSI styling, so the
+/// "plain" and "colored" variants differ only in whether the styling is
+/// stripped afterwards — no global state, safe under parallel test threads.
 fn side_by_side_plain(old: &str, new: &str) -> String {
-    colored::control::set_override(false);
-    let output = side_by_side_raw(old, new);
-    colored::control::unset_override();
-    output
+    strip_ansi(&side_by_side_colored(old, new))
 }
 
 /// Helper: diff two Python snippets and return the side-by-side output with
 /// ANSI color codes included.
 fn side_by_side_colored(old: &str, new: &str) -> String {
-    colored::control::set_override(true);
-    let output = side_by_side_raw(old, new);
-    colored::control::unset_override();
-    output
+    side_by_side_lang_colored(old, new, "py")
 }
 
-fn side_by_side_raw(old: &str, new: &str) -> String {
-    let profile = languages::profile_for_ext("py").expect("python profile");
+/// Diffs two snippets in the given language and returns the styled
+/// side-by-side output (the formatter always emits ANSI).
+fn side_by_side_lang_colored(old: &str, new: &str, ext: &str) -> String {
+    let profile = languages::profile_for_ext(ext).expect("language profile");
     let result = diff_sources(
         old.as_bytes(),
         new.as_bytes(),
@@ -44,7 +45,8 @@ fn side_by_side_raw(old: &str, new: &str) -> String {
         destination_tree: &result.dst_tree,
         mapping: &result.mapping,
         actions: &result.actions,
-        filename: None,
+        source_filename: None,
+        destination_filename: None,
         language_name: None,
     })
 }
@@ -67,24 +69,6 @@ fn parse_rows(output: &str) -> Vec<(Option<usize>, String, Option<usize>, String
             (left_num, left_text, right_num, right_text)
         })
         .collect()
-}
-
-/// Strip ANSI escape codes from a string.
-fn strip_ansi(input: &str) -> String {
-    let mut result = String::new();
-    let mut in_escape = false;
-    for ch in input.chars() {
-        if ch == '\x1b' {
-            in_escape = true;
-        } else if in_escape {
-            if ch == 'm' {
-                in_escape = false;
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-    result
 }
 
 const ANSI_YELLOW: &str = "\x1b[33m";
@@ -186,7 +170,7 @@ fn updated_line_colors_only_changed_tokens() {
 }
 
 /// Issue 3: A function that kept its relative position among its peers should
-/// NOT have cyan (moved) line numbers. `unused` stayed after `add` in both
+/// NOT have yellow (moved) line numbers. `unused` stayed after `add` in both
 /// files, it was not reordered.
 #[test]
 fn non_reordered_function_is_not_marked_as_moved() {
@@ -198,15 +182,15 @@ fn non_reordered_function_is_not_marked_as_moved() {
         .find(|line| strip_ansi(line).contains("def unused"))
         .expect("should have a line for def unused");
 
-    // The source line number (left column) for this row should NOT be cyan.
+    // The source line number (left column) for this row should NOT be yellow.
     let left_number_column = unused_line
         .split('│')
         .next()
         .expect("should have left number column");
 
     assert!(
-        !left_number_column.contains(ANSI_CYAN),
-        "Line number for 'def unused' should not be cyan (it was not moved).\n\
+        !left_number_column.contains(ANSI_YELLOW),
+        "Line number for 'def unused' should not be yellow (it was not moved).\n\
          Left number column: {:?}",
         left_number_column,
     );
@@ -378,38 +362,7 @@ const ANSI_GREEN: &str = "\x1b[32m";
 const ANSI_RED: &str = "\x1b[31m";
 
 fn side_by_side_lang_plain(old: &str, new: &str, ext: &str) -> String {
-    colored::control::set_override(false);
-    let output = side_by_side_lang_raw(old, new, ext);
-    colored::control::unset_override();
-    output
-}
-
-fn side_by_side_lang_colored(old: &str, new: &str, ext: &str) -> String {
-    colored::control::set_override(true);
-    let output = side_by_side_lang_raw(old, new, ext);
-    colored::control::unset_override();
-    output
-}
-
-fn side_by_side_lang_raw(old: &str, new: &str, ext: &str) -> String {
-    let profile = languages::profile_for_ext(ext).expect("language profile");
-    let result = diff_sources(
-        old.as_bytes(),
-        new.as_bytes(),
-        profile,
-        &DiffOptions::default(),
-    )
-    .expect("diff failed");
-    format_side_by_side(&SideBySideInput {
-        source_bytes: old.as_bytes(),
-        destination_bytes: new.as_bytes(),
-        source_tree: &result.src_tree,
-        destination_tree: &result.dst_tree,
-        mapping: &result.mapping,
-        actions: &result.actions,
-        filename: None,
-        language_name: None,
-    })
+    strip_ansi(&side_by_side_lang_colored(old, new, ext))
 }
 
 /// Returns `true` if `needle` appears inside an active `color_code` span.
@@ -797,5 +750,105 @@ fn kept(node: &Node, profile: &Profile) -> Vec<Node> {
         "the removed 'children' return line must be unpaired, got right_num={:?} right={:?}",
         children_row.2,
         children_row.3,
+    );
+}
+
+// ── Header and moved-line rendering ─────────────────────────────────────
+
+const ANSI_BOLD: &str = "\x1b[1m";
+
+/// Renders a diff of `a.py` vs `b.py` with filenames and language set,
+/// returning the styled output.
+fn side_by_side_with_header(old: &str, new: &str) -> String {
+    let profile = languages::profile_for_ext("py").expect("python profile");
+    let result = diff_sources(
+        old.as_bytes(),
+        new.as_bytes(),
+        profile,
+        &DiffOptions::default(),
+    )
+    .expect("diff failed");
+    format_side_by_side(&SideBySideInput {
+        source_bytes: old.as_bytes(),
+        destination_bytes: new.as_bytes(),
+        source_tree: &result.src_tree,
+        destination_tree: &result.dst_tree,
+        mapping: &result.mapping,
+        actions: &result.actions,
+        source_filename: Some("a.py"),
+        destination_filename: Some("b.py"),
+        language_name: languages::language_name_for_ext("py"),
+    })
+}
+
+/// The header shows each file's name on its own side, inside the column
+/// layout, with a bold filename and a cyan language tag.
+#[test]
+fn header_shows_each_filename_on_its_side() {
+    let output = side_by_side_with_header("x = 1\n", "x = 2\n");
+    let header = output.lines().next().expect("output has a header line");
+    let clean = strip_ansi(header);
+
+    let parts: Vec<&str> = clean.split('│').collect();
+    assert!(
+        parts.len() >= 4,
+        "header must use the column layout so separators align, got {clean:?}",
+    );
+    assert!(
+        parts[1].contains("a.py") && !parts[1].contains("b.py"),
+        "left header cell should name only the old file, got {:?}",
+        parts[1],
+    );
+    assert!(
+        parts[3].contains("b.py") && !parts[3].contains("a.py"),
+        "right header cell should name only the new file, got {:?}",
+        parts[3],
+    );
+    assert!(
+        parts[1].contains("[Python]"),
+        "language tag should be properly capitalized, got {:?}",
+        parts[1],
+    );
+    assert!(
+        has_color_at(header, "a.py", ANSI_BOLD),
+        "filename should be bold, header: {header:?}",
+    );
+    assert!(
+        has_color_at(header, "[Python]", ANSI_CYAN),
+        "language tag should be cyan, header: {header:?}",
+    );
+}
+
+/// Reordered lines are flagged with yellow line numbers (yellow = changed,
+/// consistent with updated tokens).
+#[test]
+fn moved_lines_have_yellow_numbers() {
+    let old = "\
+def first():
+    return 1
+
+def second():
+    return 2
+";
+    let new = "\
+def second():
+    return 2
+
+def first():
+    return 1
+";
+    let output = side_by_side_colored(old, new);
+    let moved_line = output.lines().find(|line| {
+        let clean = strip_ansi(line);
+        clean.contains("def ")
+            && line
+                .split('│')
+                .next()
+                .is_some_and(|n| n.contains(ANSI_YELLOW))
+    });
+    assert!(
+        moved_line.is_some(),
+        "at least one reordered 'def' line should have a yellow line number.\n\
+         Output:\n{output}",
     );
 }

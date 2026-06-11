@@ -25,28 +25,13 @@ pub struct LinePairing {
     pub moved_dst_lines: HashSet<usize>,
 }
 
-/// Splits a byte buffer into [`FileLine`]s on `\n` boundaries.
+/// Splits source text into [`FileLine`]s on `\n` boundaries.
 ///
-/// Uses lossy UTF-8 conversion so that non-UTF-8 input degrades gracefully
-/// (matching `build_line_tree`'s behaviour) instead of panicking.
+/// Callers with raw bytes should convert with `String::from_utf8_lossy`
+/// first (matching `build_line_tree`'s behaviour) and keep the resulting
+/// `Cow` alive for as long as the lines are used.
 #[must_use]
-pub fn split_into_lines(bytes: &[u8]) -> Vec<FileLine<'_>> {
-    // Safety: we need a &str that lives as long as `bytes`.  For pure-ASCII
-    // and valid-UTF-8 inputs (the overwhelming majority) `from_utf8` succeeds
-    // and we borrow zero-copy.  For the rare invalid case we fall back to
-    // `from_utf8_lossy`, which may allocate — but the returned `Cow` is
-    // converted to an owned `String` whose lifetime we cannot return as a
-    // `&str` tied to `bytes`.  So we leak the allocation into a &'static str.
-    // This only happens for genuinely broken files and the total leaked size
-    // equals the file size, bounded by `max_file_size`.
-    let text: &str = if let Ok(valid) = std::str::from_utf8(bytes) {
-        valid
-    } else {
-        let owned = String::from_utf8_lossy(bytes).into_owned();
-        // Leak is bounded by max_file_size and only triggers for
-        // non-UTF-8 files — an uncommon edge case.
-        Box::leak(owned.into_boxed_str())
-    };
+pub fn split_into_lines(text: &str) -> Vec<FileLine<'_>> {
     let mut lines = Vec::new();
     let mut offset = 0;
     for line in text.split('\n') {
@@ -67,9 +52,9 @@ pub fn split_into_lines(bytes: &[u8]) -> Vec<FileLine<'_>> {
 /// Returns the line index that contains the given byte offset.
 #[must_use]
 pub fn line_index_at_byte(lines: &[FileLine], byte_offset: usize) -> Option<usize> {
-    lines
-        .iter()
-        .position(|line| byte_offset >= line.start_byte && byte_offset <= line.end_byte)
+    // Lines are sorted and contiguous, so binary search applies.
+    let index = lines.partition_point(|line| line.end_byte < byte_offset);
+    (index < lines.len() && byte_offset >= lines[index].start_byte).then_some(index)
 }
 
 /// Builds a complete [`LinePairing`] from the AST-level mapping.
@@ -98,14 +83,15 @@ pub fn build_line_pairing<'a>(
     }
 }
 
-/// Phase 1: vote using unique leaf nodes weighted by inverse label frequency.
+/// Phase 1: anchor lines via leaf nodes whose label is unique, voting for the
+/// source line their mapped counterpart lives on.
 fn phase1_vote<'a>(
     source_lines: &[FileLine<'a>],
     destination_lines: &[FileLine<'a>],
     source_tree: &Tree,
     destination_tree: &Tree,
     mapping: &Mapping,
-) -> Vec<(usize, usize, f64)> {
+) -> Vec<(usize, usize, usize)> {
     let destination_label_frequency: HashMap<&str, usize> = destination_tree
         .all_nodes()
         .filter(|n| n.children.is_empty())
@@ -114,17 +100,13 @@ fn phase1_vote<'a>(
             acc
         });
 
-    let mut weighted_votes: HashMap<usize, HashMap<usize, f64>> = HashMap::new();
+    let mut votes: HashMap<usize, HashMap<usize, usize>> = HashMap::new();
 
     for destination_node in destination_tree.all_nodes() {
         if !destination_node.children.is_empty() {
             continue;
         }
-        let frequency = destination_label_frequency
-            .get(destination_node.label.as_str())
-            .copied()
-            .unwrap_or(1);
-        if frequency != 1 {
+        if destination_label_frequency[destination_node.label.as_str()] != 1 {
             continue;
         }
 
@@ -140,31 +122,31 @@ fn phase1_vote<'a>(
             continue;
         };
 
-        *weighted_votes
+        *votes
             .entry(destination_line)
             .or_default()
             .entry(source_line)
-            .or_insert(0.0) += 1.0;
+            .or_insert(0) += 1;
     }
 
-    let mut candidates: Vec<(usize, usize, f64)> = weighted_votes
+    let mut candidates: Vec<(usize, usize, usize)> = votes
         .into_iter()
         .filter_map(|(destination_line, line_votes)| {
             line_votes
                 .into_iter()
-                .max_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(source_line, weight)| (destination_line, source_line, weight))
+                .max_by_key(|&(_, count)| count)
+                .map(|(source_line, count)| (destination_line, source_line, count))
         })
         .collect();
 
-    candidates.sort_by(|a, b| b.2.total_cmp(&a.2));
+    candidates.sort_by_key(|&(_, _, count)| std::cmp::Reverse(count));
     candidates
 }
 
 /// Phase 2: fill gaps between anchors by matching lines with identical text,
 /// then pair remaining lines positionally.
 fn phase2_text_match(
-    candidates: Vec<(usize, usize, f64)>,
+    candidates: Vec<(usize, usize, usize)>,
     source_lines: &[FileLine],
     destination_lines: &[FileLine],
 ) -> (HashMap<usize, usize>, HashSet<usize>) {

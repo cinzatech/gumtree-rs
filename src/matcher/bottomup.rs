@@ -264,17 +264,6 @@ fn recover_inner_nodes(
         // Collect source descendants once for all candidates in this bucket.
         let src_descs = source_tree.descendants(*source_descendant);
 
-        if bucket.len() == 1 {
-            let candidate = bucket[0];
-            let dice =
-                dice_with_source_descendants(&src_descs, destination_tree, candidate, mapping);
-            if dice > 0.0 {
-                bucket.pop();
-                mapping.link(*source_descendant, candidate);
-            }
-            continue;
-        }
-
         let best = bucket
             .iter()
             .enumerate()
@@ -319,12 +308,7 @@ fn recover_by_parent(
         let kind = &source_node.kind;
 
         // Same-index sibling first (preserves position when possible).
-        let sibling_index = source_tree
-            .node(parent_id)
-            .children
-            .iter()
-            .position(|&child_id| child_id == *source_descendant)
-            .unwrap();
+        let sibling_index = source_tree.position_in_parent(*source_descendant).unwrap();
 
         let destination_siblings = &destination_tree.node(mapped_parent).children;
         if sibling_index < destination_siblings.len() {
