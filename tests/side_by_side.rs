@@ -48,6 +48,9 @@ fn side_by_side_lang_colored(old: &str, new: &str, ext: &str) -> String {
         source_filename: None,
         destination_filename: None,
         language_name: None,
+        terminal_width: None,
+        first_file: true,
+        last_file: true,
     })
 }
 
@@ -778,6 +781,9 @@ fn side_by_side_with_header(old: &str, new: &str) -> String {
         source_filename: Some("a.py"),
         destination_filename: Some("b.py"),
         language_name: languages::language_name_for_ext("py"),
+        terminal_width: None,
+        first_file: true,
+        last_file: true,
     })
 }
 
@@ -786,7 +792,10 @@ fn side_by_side_with_header(old: &str, new: &str) -> String {
 #[test]
 fn header_shows_each_filename_on_its_side() {
     let output = side_by_side_with_header("x = 1\n", "x = 2\n");
-    let header = output.lines().next().expect("output has a header line");
+    let header = output
+        .lines()
+        .find(|line| strip_ansi(line).contains("a.py"))
+        .expect("output has a header line");
     let clean = strip_ansi(header);
 
     let parts: Vec<&str> = clean.split('│').collect();
@@ -814,8 +823,133 @@ fn header_shows_each_filename_on_its_side() {
         "filename should be bold, header: {header:?}",
     );
     assert!(
-        has_color_at(header, "[Python]", ANSI_CYAN),
-        "language tag should be cyan, header: {header:?}",
+        has_color_at(header, "Python", ANSI_CYAN),
+        "language name should be cyan, header: {header:?}",
+    );
+    assert!(
+        !has_color_at(header, "[", ANSI_CYAN),
+        "brackets around the language name should be uncolored, header: {header:?}",
+    );
+}
+
+/// A standalone diff renders as one closed table: flat `┬` top rule, `┼`
+/// rule under the header, and a `┴` bottom rule after the last hunk.
+#[test]
+fn standalone_table_is_framed_top_and_bottom() {
+    let output = side_by_side_with_header("x = 1\n", "x = 2\n");
+    let lines: Vec<String> = output.lines().map(strip_ansi).collect();
+    assert!(
+        lines[0].contains('┬') && !lines[0].contains('┼'),
+        "first line should be a flat top rule with ┬ junctions, got {:?}",
+        lines[0],
+    );
+    assert!(
+        lines[1].contains("a.py"),
+        "header row should follow the top rule, got {:?}",
+        lines[1],
+    );
+    assert!(
+        lines[2].contains('┼'),
+        "a ┼ rule should separate the header from the rows, got {:?}",
+        lines[2],
+    );
+    let last = lines.last().unwrap();
+    assert!(
+        last.contains('┴') && !last.contains('┼'),
+        "the table must be closed by a ┴ bottom rule, got {last:?}",
+    );
+}
+
+/// A file in the middle of a concatenated sequence (one git invocation per
+/// path) opens with a `┼` rule that connects to the previous file's rows and
+/// leaves the bottom open for the next file's rule.
+#[test]
+fn middle_file_connects_to_neighbours() {
+    let profile = languages::profile_for_ext("py").expect("python profile");
+    let result = diff_sources(b"x = 1\n", b"x = 2\n", profile, &DiffOptions::default())
+        .expect("diff failed");
+    let output = format_side_by_side(&SideBySideInput {
+        source_bytes: b"x = 1\n",
+        destination_bytes: b"x = 2\n",
+        source_tree: &result.src_tree,
+        destination_tree: &result.dst_tree,
+        mapping: &result.mapping,
+        actions: &result.actions,
+        source_filename: Some("a.py"),
+        destination_filename: Some("b.py"),
+        language_name: Some("Python"),
+        terminal_width: None,
+        first_file: false,
+        last_file: false,
+    });
+    let lines: Vec<String> = output.lines().map(strip_ansi).collect();
+    assert!(
+        lines[0].contains('┼') && !lines[0].contains('┬'),
+        "a middle file's top rule must connect with ┼ junctions, got {:?}",
+        lines[0],
+    );
+    let last = lines.last().unwrap();
+    assert!(
+        !last.contains('┴'),
+        "a middle file must not close the table, got {last:?}",
+    );
+}
+
+/// A filename longer than the content column wraps onto further visual lines
+/// exactly like code rows do, instead of overflowing and breaking the layout.
+#[test]
+fn long_filename_wraps_without_breaking_layout() {
+    let long_name = "directory/".repeat(12) + "file.py"; // 127 chars > 50-column cell
+    let profile = languages::profile_for_ext("py").expect("python profile");
+    let result = diff_sources(b"x = 1\n", b"x = 2\n", profile, &DiffOptions::default())
+        .expect("diff failed");
+    let output = format_side_by_side(&SideBySideInput {
+        source_bytes: b"x = 1\n",
+        destination_bytes: b"x = 2\n",
+        source_tree: &result.src_tree,
+        destination_tree: &result.dst_tree,
+        mapping: &result.mapping,
+        actions: &result.actions,
+        source_filename: Some(&long_name),
+        destination_filename: Some("b.py"),
+        language_name: Some("Python"),
+        terminal_width: None, // deterministic default: 50-column content cells
+        first_file: true,
+        last_file: true,
+    });
+    let lines: Vec<String> = output.lines().map(strip_ansi).collect();
+
+    // Every line is either a rule or keeps the 4-column layout; the long
+    // name must not push extra `│` separators out of alignment.
+    for line in &lines {
+        assert!(
+            line.contains('┬')
+                || line.contains('┼')
+                || line.contains('┴')
+                || line.matches('│').count() == 3,
+            "every row must keep the 4-column layout, got {line:?}",
+        );
+    }
+
+    // The wrapped filename is reassembled across the header's visual lines.
+    let header_text: String = lines
+        .iter()
+        .take_while(|l| !l.contains('┼'))
+        .map(|l| {
+            l.split('│')
+                .nth(1)
+                .unwrap_or("")
+                .trim_matches(' ')
+                .to_string()
+        })
+        .collect();
+    assert!(
+        header_text.contains("file.py"),
+        "the tail of the wrapped filename must appear, header lines: {lines:?}",
+    );
+    assert!(
+        header_text.starts_with("directory/"),
+        "the head of the wrapped filename must appear, header lines: {lines:?}",
     );
 }
 

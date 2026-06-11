@@ -22,6 +22,15 @@ pub struct FormatInput<'a> {
     pub destination_filename: Option<&'a str>,
     /// Detected language name, shown in the side-by-side header.
     pub language_name: Option<&'a str>,
+    /// Width of the output terminal in columns, or `None` when stdout is not
+    /// a terminal.
+    pub terminal_width: Option<usize>,
+    /// Whether this diff is the first of a concatenated sequence (opens the
+    /// table with a flat top rule).
+    pub first_file: bool,
+    /// Whether this diff is the last of a concatenated sequence (closes the
+    /// table with a bottom rule).
+    pub last_file: bool,
 }
 
 /// Common interface implemented by every output format.

@@ -159,6 +159,7 @@ fn main() -> ExitCode {
     };
 
     let lang_name = languages::language_name_for_ext(&ext);
+    let (first_file, last_file) = file_sequence_position();
 
     let input = FormatInput {
         source_bytes: &old_src,
@@ -167,6 +168,10 @@ fn main() -> ExitCode {
         source_filename: Some(old_display),
         destination_filename: Some(new_display),
         language_name: lang_name,
+        terminal_width: terminal_size::terminal_size()
+            .map(|(terminal_size::Width(width), _)| width as usize),
+        first_file,
+        last_file,
     };
 
     if format.eq_ignore_ascii_case("JSON") {
@@ -187,6 +192,22 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+/// Position of this invocation within a multi-file diff sequence.
+///
+/// When git runs an external diff it invokes it once per changed path and
+/// exposes `GIT_DIFF_PATH_COUNTER` (1-based) and `GIT_DIFF_PATH_TOTAL`, so
+/// the concatenated outputs can render as one continuous table: a flat top
+/// rule on the first file, connecting rules between files, and a closing
+/// bottom rule on the last.  Outside git both values are absent and a single
+/// invocation is both first and last.
+fn file_sequence_position() -> (bool, bool) {
+    let var = |name| env::var(name).ok().and_then(|v| v.parse::<u64>().ok());
+    match (var("GIT_DIFF_PATH_COUNTER"), var("GIT_DIFF_PATH_TOTAL")) {
+        (Some(counter), Some(total)) => (counter <= 1, counter >= total),
+        _ => (true, true),
+    }
 }
 
 /// Whether colored output should reach stdout, following the common

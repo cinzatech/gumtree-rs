@@ -69,11 +69,15 @@ fn classify_leaves(
         .collect()
 }
 
+/// A run of text with a uniform style, generic over the style vocabulary:
+/// diff rows use [`SpanColor`], the file header uses [`HeaderStyle`].
 #[derive(Debug, Clone)]
-struct ColoredSpan<'a> {
+struct Span<'a, C> {
     text: &'a str,
-    color: SpanColor,
+    color: C,
 }
+
+type ColoredSpan<'a> = Span<'a, SpanColor>;
 
 fn build_line_spans<'a>(
     line: &FileLine<'a>,
@@ -300,18 +304,18 @@ fn absent_fill(width: usize) -> String {
     fill.dimmed().to_string()
 }
 
-/// Split a list of colored spans into visual lines of at most `width` columns.
+/// Split a list of styled spans into visual lines of at most `width` columns.
 /// Each returned element is (spans, `visual_length`).
 ///
 /// Uses Unicode display width so that multi-byte characters like `─` (3 bytes,
 /// 1 column) and CJK characters (3–4 bytes, 2 columns) are measured correctly.
-fn wrap_spans<'a>(spans: &[ColoredSpan<'a>], width: usize) -> Vec<(Vec<ColoredSpan<'a>>, usize)> {
+fn wrap_spans<'a, C: Copy>(spans: &[Span<'a, C>], width: usize) -> Vec<(Vec<Span<'a, C>>, usize)> {
     if width == 0 {
         let total: usize = spans.iter().map(|s| display_width(s.text)).sum();
         return vec![(spans.to_vec(), total)];
     }
-    let mut lines: Vec<(Vec<ColoredSpan>, usize)> = Vec::new();
-    let mut current_spans: Vec<ColoredSpan> = Vec::new();
+    let mut lines: Vec<(Vec<Span<C>>, usize)> = Vec::new();
+    let mut current_spans: Vec<Span<C>> = Vec::new();
     let mut current_len: usize = 0; // display columns
 
     for span in spans {
@@ -332,14 +336,14 @@ fn wrap_spans<'a>(spans: &[ColoredSpan<'a>], width: usize) -> Vec<(Vec<ColoredSp
                 }
                 let (take_bytes, take_cols) = bytes_fitting_columns(remaining, width);
                 let take_bytes = take_bytes.max(remaining.chars().next().map_or(1, char::len_utf8));
-                current_spans.push(ColoredSpan {
+                current_spans.push(Span {
                     text: &remaining[..take_bytes],
                     color: span.color,
                 });
                 current_len += take_cols.max(1);
                 remaining = &remaining[take_bytes..];
             } else {
-                current_spans.push(ColoredSpan {
+                current_spans.push(Span {
                     text: &remaining[..take_bytes],
                     color: span.color,
                 });
@@ -442,10 +446,21 @@ fn render_row(
     }
 }
 
-fn render_separator(line_number_width: usize, content_width: usize, output: &mut String) {
+/// Renders a horizontal rule across all four columns. `junction` is the
+/// character drawn where the rule crosses a column separator: `┬` for the
+/// top border (nothing above it), `┼` between rows, `┴` for the bottom
+/// border (nothing below it).
+fn render_separator(
+    junction: char,
+    line_number_width: usize,
+    content_width: usize,
+    output: &mut String,
+) {
     let number_bar = "─".repeat(line_number_width);
     let content_bar = "─".repeat(content_width);
-    let raw = format!("{number_bar}─┼─{content_bar}─┼─{number_bar}─┼─{content_bar}");
+    let raw = format!(
+        "{number_bar}─{junction}─{content_bar}─{junction}─{number_bar}─{junction}─{content_bar}"
+    );
     writeln!(output, "{}", raw.dimmed()).unwrap();
 }
 
@@ -463,35 +478,67 @@ impl DiffFormatter for TerminalFormatter {
             source_filename: input.source_filename,
             destination_filename: input.destination_filename,
             language_name: input.language_name,
+            terminal_width: input.terminal_width,
+            first_file: input.first_file,
+            last_file: input.last_file,
         })
     }
 }
 
-/// Builds one header cell: bold filename plus a cyan `[Language]` tag,
-/// padded to `width` columns (filename truncated when needed).
-fn header_cell(filename: Option<&str>, language_name: Option<&str>, width: usize) -> String {
-    let tag: String = language_name
-        .map(|language| format!("[{language}]"))
-        .unwrap_or_default()
-        .chars()
-        .take(width)
-        .collect();
-    let gap = usize::from(filename.is_some() && !tag.is_empty());
-    let name_budget = width.saturating_sub(tag.chars().count() + gap);
-    let name: String = filename.unwrap_or("").chars().take(name_budget).collect();
-    let used = name.chars().count() + gap + tag.chars().count();
-    format!(
-        "{}{}{}{}",
-        name.bold(),
-        " ".repeat(gap),
-        tag.cyan(),
-        " ".repeat(width.saturating_sub(used)),
-    )
+/// Style vocabulary for the file header: bold filename, plain brackets,
+/// cyan language name.
+#[derive(Debug, Clone, Copy)]
+enum HeaderStyle {
+    Filename,
+    Plain,
+    Language,
 }
 
-/// Renders the file-info header as a regular row of the side-by-side layout
+/// Builds one header cell as styled spans: `filename [Language]`.
+fn header_spans<'a>(
+    filename: Option<&'a str>,
+    language_name: Option<&'a str>,
+) -> Vec<Span<'a, HeaderStyle>> {
+    let mut spans = Vec::new();
+    if let Some(name) = filename {
+        spans.push(Span {
+            text: name,
+            color: HeaderStyle::Filename,
+        });
+    }
+    if let Some(language) = language_name {
+        let lead = if filename.is_some() { " [" } else { "[" };
+        spans.push(Span {
+            text: lead,
+            color: HeaderStyle::Plain,
+        });
+        spans.push(Span {
+            text: language,
+            color: HeaderStyle::Language,
+        });
+        spans.push(Span {
+            text: "]",
+            color: HeaderStyle::Plain,
+        });
+    }
+    spans
+}
+
+fn render_header_spans(spans: &[Span<HeaderStyle>]) -> String {
+    spans
+        .iter()
+        .map(|span| match span.color {
+            HeaderStyle::Filename => span.text.bold().to_string(),
+            HeaderStyle::Plain => span.text.to_string(),
+            HeaderStyle::Language => span.text.cyan().to_string(),
+        })
+        .collect()
+}
+
+/// Renders the file-info header as regular rows of the side-by-side layout
 /// (blank number cells, one filename per side), so the column separators run
-/// through it and the `┼` intersections of the rule below connect cleanly.
+/// through it and the junctions of the rules above and below connect cleanly.
+/// Long filenames wrap onto further visual lines exactly like code rows do.
 fn render_file_header(
     source_filename: Option<&str>,
     destination_filename: Option<&str>,
@@ -502,13 +549,29 @@ fn render_file_header(
 ) {
     let separator = "│".dimmed();
     let number_blank = " ".repeat(line_number_width);
-    let left = header_cell(source_filename, language_name, content_width);
-    let right = header_cell(destination_filename, language_name, content_width);
-    writeln!(
-        output,
-        "{number_blank} {separator} {left} {separator} {number_blank} {separator} {right}",
-    )
-    .unwrap();
+    let left_lines = wrap_spans(&header_spans(source_filename, language_name), content_width);
+    let right_lines = wrap_spans(
+        &header_spans(destination_filename, language_name),
+        content_width,
+    );
+    let num_visual = left_lines.len().max(right_lines.len());
+    for v in 0..num_visual {
+        let left = left_lines.get(v).map_or_else(
+            || " ".repeat(content_width),
+            |(spans, vis_len)| {
+                let padding = content_width.saturating_sub(*vis_len);
+                format!("{}{}", render_header_spans(spans), " ".repeat(padding))
+            },
+        );
+        let right = right_lines
+            .get(v)
+            .map_or_else(String::new, |(spans, _)| render_header_spans(spans));
+        writeln!(
+            output,
+            "{number_blank} {separator} {left} {separator} {number_blank} {separator} {right}",
+        )
+        .unwrap();
+    }
 }
 
 /// All inputs needed to produce a side-by-side diff.
@@ -522,6 +585,19 @@ pub struct SideBySideInput<'a> {
     pub source_filename: Option<&'a str>,
     pub destination_filename: Option<&'a str>,
     pub language_name: Option<&'a str>,
+    /// Width of the output terminal in columns, or `None` when stdout is not
+    /// a terminal.  Querying the environment is left to the caller so this
+    /// formatter stays a pure function.
+    pub terminal_width: Option<usize>,
+    /// Whether this diff is the first of a sequence whose outputs are
+    /// concatenated (e.g. one git invocation per changed path).  The first
+    /// file opens the table with a flat `┬` top rule; later files use a `┼`
+    /// rule that connects to the rows of the previous file above.
+    pub first_file: bool,
+    /// Whether this diff is the last of such a sequence.  Only the last file
+    /// closes the table with a `┴` bottom rule; earlier files stay open so
+    /// the next file's connecting rule continues the columns.
+    pub last_file: bool,
 }
 
 #[must_use]
@@ -587,10 +663,10 @@ pub fn format_side_by_side(input: &SideBySideInput) -> String {
         // Layout: {line_num} │ {content} │ {line_num} │ {content}
         // Total  = 2*line_number_width + 2*content_width + 9  (three " │ " separators)
         let default = 50;
-        terminal_size::terminal_size()
-            .map(|(terminal_size::Width(w), _)| {
+        input
+            .terminal_width
+            .map(|w| {
                 let chrome = 2 * line_number_width + 9;
-                let w = w as usize;
                 if w > chrome + 2 {
                     (w - chrome) / 2
                 } else {
@@ -601,10 +677,12 @@ pub fn format_side_by_side(input: &SideBySideInput) -> String {
     };
 
     let mut output = String::new();
-    if input.source_filename.is_some()
+    let framed = input.source_filename.is_some()
         || input.destination_filename.is_some()
-        || input.language_name.is_some()
-    {
+        || input.language_name.is_some();
+    if framed {
+        let top = if input.first_file { '┬' } else { '┼' };
+        render_separator(top, line_number_width, content_width, &mut output);
         render_file_header(
             input.source_filename,
             input.destination_filename,
@@ -613,15 +691,23 @@ pub fn format_side_by_side(input: &SideBySideInput) -> String {
             content_width,
             &mut output,
         );
-        render_separator(line_number_width, content_width, &mut output);
+        let below = if hunks.is_empty() && input.last_file {
+            '┴'
+        } else {
+            '┼'
+        };
+        render_separator(below, line_number_width, content_width, &mut output);
     }
     for (hunk_index, &(start, end)) in hunks.iter().enumerate() {
         if hunk_index > 0 {
-            render_separator(line_number_width, content_width, &mut output);
+            render_separator('┼', line_number_width, content_width, &mut output);
         }
         for row in &rows[start..end] {
             render_row(row, line_number_width, content_width, &mut output);
         }
+    }
+    if framed && input.last_file && !hunks.is_empty() {
+        render_separator('┴', line_number_width, content_width, &mut output);
     }
     output
 }
