@@ -1,12 +1,29 @@
 //! Line-pairing algorithm: builds a bijective destination-line → source-line mapping.
 //!
+//! The pairing is a projection of the AST mapping onto lines, completed by
+//! one classical text alignment for what the AST cannot see:
+//!
+//! 1. **Votes**: every mapped destination token votes for the source line
+//!    its counterpart lives on; the majority wins.  This is the mapping —
+//!    and therefore the edit script — read line by line.
+//! 2. **Gap alignment**: between consecutive anchors, lines invisible to
+//!    the mapping (blank lines, interior lines of multi-line tokens) are
+//!    aligned by longest common subsequence over identical trimmed text.
+//!    Alignment is order-preserving inside each gap, so it can never
+//!    fabricate a move.
+//!
+//! Lines that neither phase pairs stay unpaired and render as whole-line
+//! deletions or insertions, exactly as the edit script describes them.  No
+//! pair is ever invented from text similarity or positional bookkeeping:
+//! an invented pair masquerades as a changed or moved line that the edit
+//! script does not contain.
+//!
 //! This module is independent of any rendering concern and can be reused by
 //! any output format that needs to align old and new lines.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::mapping::Mapping;
-use crate::string_distance::normalised_similarity;
 use crate::tree::Tree;
 
 /// A single logical line within a source buffer.
@@ -73,9 +90,7 @@ pub fn build_line_pairing<'a>(
         destination_tree,
         mapping,
     );
-    let (result, used_source_lines) =
-        phase2_text_match(candidates, source_lines, destination_lines);
-    let dst_to_src = phase3_blanks(result, used_source_lines, source_lines, destination_lines);
+    let dst_to_src = phase2_align(candidates, source_lines, destination_lines);
     let moved_dst_lines = detect_moved_destination_lines(&dst_to_src, destination_lines.len());
     LinePairing {
         dst_to_src,
@@ -83,8 +98,8 @@ pub fn build_line_pairing<'a>(
     }
 }
 
-/// Phase 1: anchor lines via leaf nodes whose label is unique, voting for the
-/// source line their mapped counterpart lives on.
+/// Phase 1: every mapped destination leaf votes for the source line its
+/// mapped counterpart lives on; each destination line's majority wins.
 fn phase1_vote<'a>(
     source_lines: &[FileLine<'a>],
     destination_lines: &[FileLine<'a>],
@@ -92,24 +107,12 @@ fn phase1_vote<'a>(
     destination_tree: &Tree,
     mapping: &Mapping,
 ) -> Vec<(usize, usize, usize)> {
-    let destination_label_frequency: HashMap<&str, usize> = destination_tree
-        .all_nodes()
-        .filter(|n| n.children.is_empty())
-        .fold(HashMap::new(), |mut acc, n| {
-            *acc.entry(n.label.as_str()).or_insert(0) += 1;
-            acc
-        });
-
     let mut votes: HashMap<usize, HashMap<usize, usize>> = HashMap::new();
 
     for destination_node in destination_tree.all_nodes() {
         if !destination_node.children.is_empty() {
             continue;
         }
-        if destination_label_frequency[destination_node.label.as_str()] != 1 {
-            continue;
-        }
-
         let Some(source_node_id) = mapping.get_src(destination_node.id) else {
             continue;
         };
@@ -134,22 +137,26 @@ fn phase1_vote<'a>(
         .filter_map(|(destination_line, line_votes)| {
             line_votes
                 .into_iter()
-                .max_by_key(|&(_, count)| count)
+                .max_by_key(|&(source_line, count)| (count, std::cmp::Reverse(source_line)))
                 .map(|(source_line, count)| (destination_line, source_line, count))
         })
         .collect();
 
-    candidates.sort_by_key(|&(_, _, count)| std::cmp::Reverse(count));
+    // Strongest anchors claim their source line first; ties break on the
+    // destination index so the result is deterministic.
+    candidates
+        .sort_by_key(|&(destination_line, _, count)| (std::cmp::Reverse(count), destination_line));
     candidates
 }
 
-/// Phase 2: fill gaps between anchors by matching lines with identical text,
-/// then pair remaining lines positionally.
-fn phase2_text_match(
+/// Phase 2: accept anchors (strongest first, one source line each), then
+/// align the lines inside each gap between consecutive anchors by identical
+/// trimmed text, keeping their relative order.
+fn phase2_align(
     candidates: Vec<(usize, usize, usize)>,
     source_lines: &[FileLine],
     destination_lines: &[FileLine],
-) -> (HashMap<usize, usize>, HashSet<usize>) {
+) -> HashMap<usize, usize> {
     let mut result: HashMap<usize, usize> = HashMap::new();
     let mut used_source_lines: HashSet<usize> = HashSet::new();
 
@@ -189,123 +196,80 @@ fn phase2_text_match(
         }
     }
 
-    // First pass, per gap: match by identical text.
-    for &(dst_from, dst_to, src_from, src_to) in &gaps {
-        let mut available: Vec<usize> = (src_from..src_to)
-            .filter(|s| !used_source_lines.contains(s))
-            .collect();
-        let unmatched_dst: Vec<usize> = (dst_from..dst_to)
-            .filter(|d| !result.contains_key(d))
-            .collect();
-        for d in unmatched_dst {
-            let text = destination_lines[d].text;
-            if let Some(pos) = available.iter().position(|&s| source_lines[s].text == text) {
-                let s = available.remove(pos);
-                result.insert(d, s);
-                used_source_lines.insert(s);
-            }
-        }
-    }
-
-    // Second pass, global: anchors from reordered code are non-monotonic,
-    // so some lines fall outside every gap.  Pair any remaining line whose
-    // exact text occurs exactly once among the unmatched lines of each side
-    // (e.g. `return a + b` of a moved function).  Runs before similarity
-    // matching so identical lines claim their partners first.
-    let leftover_dst: Vec<usize> = (0..dst_count)
-        .filter(|d| !result.contains_key(d) && !destination_lines[*d].text.trim().is_empty())
-        .collect();
-    let leftover_src: Vec<usize> = (0..src_count)
-        .filter(|s| !used_source_lines.contains(s) && !source_lines[*s].text.trim().is_empty())
-        .collect();
-    let mut src_by_text: HashMap<&str, Vec<usize>> = HashMap::new();
-    for &s in &leftover_src {
-        src_by_text.entry(source_lines[s].text).or_default().push(s);
-    }
-    let mut dst_text_count: HashMap<&str, usize> = HashMap::new();
-    for &d in &leftover_dst {
-        *dst_text_count.entry(destination_lines[d].text).or_insert(0) += 1;
-    }
-    for &d in &leftover_dst {
-        let text = destination_lines[d].text;
-        if dst_text_count[text] != 1 {
-            continue;
-        }
-        if let Some(sources) = src_by_text.get(text) {
-            if let [s] = sources[..] {
-                result.insert(d, s);
-                used_source_lines.insert(s);
-            }
-        }
-    }
-
-    // Third pass, per gap: pair remaining lines by text similarity, best
-    // match first, so `.collect()` pairs with `.collect();` rather than
-    // with whatever line happens to sit at the same offset.  Dissimilar
-    // lines stay unpaired and render as whole-line delete/insert.
+    // Per gap: align remaining lines with identical trimmed text, keeping
+    // their relative order.  This is what pairs blank lines and bare
+    // punctuation lines, which carry no tokens the mapping could see.
     for &(dst_from, dst_to, src_from, src_to) in &gaps {
         let available: Vec<usize> = (src_from..src_to)
             .filter(|s| !used_source_lines.contains(s))
             .collect();
-        let remaining_dst: Vec<usize> = (dst_from..dst_to)
+        let unmatched: Vec<usize> = (dst_from..dst_to)
             .filter(|d| !result.contains_key(d))
             .collect();
-        let mut scored: Vec<(f64, usize, usize)> = Vec::new();
-        for &d in &remaining_dst {
-            for &s in &available {
-                let similarity = normalised_similarity(
-                    destination_lines[d].text.trim(),
-                    source_lines[s].text.trim(),
-                );
-                if similarity >= SIMILARITY_THRESHOLD {
-                    scored.push((similarity, d, s));
-                }
-            }
-        }
-        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-        for (_, d, s) in scored {
-            if result.contains_key(&d) || used_source_lines.contains(&s) {
-                continue;
-            }
+        let identical =
+            |d: usize, s: usize| destination_lines[d].text.trim() == source_lines[s].text.trim();
+        for (d, s) in lcs_matches(&unmatched, &available, &identical) {
             result.insert(d, s);
             used_source_lines.insert(s);
         }
     }
 
-    (result, used_source_lines)
+    result
 }
 
-/// Minimum trimmed-text similarity for two non-identical lines to pair.
-/// Low enough that `print(about)` still pairs with its expanded successor
-/// (≈0.35), high enough that unrelated lines like `result` and
-/// `.collect()` (≈0.2) stay apart.
-const SIMILARITY_THRESHOLD: f64 = 0.3;
-
-/// Phase 3: pair remaining blank lines positionally.
-fn phase3_blanks(
-    mut result: HashMap<usize, usize>,
-    mut used_source_lines: HashSet<usize>,
-    source_lines: &[FileLine],
-    destination_lines: &[FileLine],
-) -> HashMap<usize, usize> {
-    let mut unmatched_source_blanks = (0..source_lines.len())
-        .filter(|i| !used_source_lines.contains(i) && source_lines[*i].text.trim().is_empty())
-        .collect::<Vec<_>>()
-        .into_iter();
-
-    let unmatched_destination_blanks: Vec<usize> = (0..destination_lines.len())
-        .filter(|i| !result.contains_key(i) && destination_lines[*i].text.trim().is_empty())
-        .collect();
-
-    for destination_blank in unmatched_destination_blanks {
-        let Some(source_blank) = unmatched_source_blanks.next() else {
-            break;
-        };
-        result.insert(destination_blank, source_blank);
-        used_source_lines.insert(source_blank);
+/// Longest common subsequence of `dst` and `src` (slices of line indices)
+/// under `equal`, returned as `(dst, src)` pairs in increasing order.
+///
+/// Falls back to greedy first-available matching when the DP table would be
+/// unreasonably large (only possible when a diff has almost no anchors).
+fn lcs_matches(
+    dst: &[usize],
+    src: &[usize],
+    equal: &impl Fn(usize, usize) -> bool,
+) -> Vec<(usize, usize)> {
+    const MAX_CELLS: usize = 1_000_000;
+    if dst.is_empty() || src.is_empty() {
+        return Vec::new();
+    }
+    if dst.len().saturating_mul(src.len()) > MAX_CELLS {
+        let mut available: Vec<usize> = src.to_vec();
+        let mut pairs = Vec::new();
+        for &d in dst {
+            if let Some(position) = available.iter().position(|&s| equal(d, s)) {
+                pairs.push((d, available.remove(position)));
+            }
+        }
+        return pairs;
     }
 
-    result
+    let rows = dst.len();
+    let columns = src.len();
+    let index = |i: usize, j: usize| i * (columns + 1) + j;
+    let mut table = vec![0u32; (rows + 1) * (columns + 1)];
+    for i in (0..rows).rev() {
+        for j in (0..columns).rev() {
+            table[index(i, j)] = if equal(dst[i], src[j]) {
+                table[index(i + 1, j + 1)] + 1
+            } else {
+                table[index(i + 1, j)].max(table[index(i, j + 1)])
+            };
+        }
+    }
+
+    let mut pairs = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < rows && j < columns {
+        if equal(dst[i], src[j]) && table[index(i, j)] == table[index(i + 1, j + 1)] + 1 {
+            pairs.push((dst[i], src[j]));
+            i += 1;
+            j += 1;
+        } else if table[index(i + 1, j)] >= table[index(i, j + 1)] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    pairs
 }
 
 /// Detects which destination lines belong to moved blocks by finding inversions
