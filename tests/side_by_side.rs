@@ -819,6 +819,11 @@ fn header_shows_each_filename_on_its_side() {
         parts[1],
     );
     assert!(
+        !parts[3].contains("[Python]"),
+        "language tag must appear only on the left side, got right {:?}",
+        parts[3],
+    );
+    assert!(
         has_color_at(header, "a.py", ANSI_BOLD),
         "filename should be bold, header: {header:?}",
     );
@@ -829,6 +834,46 @@ fn header_shows_each_filename_on_its_side() {
     assert!(
         !has_color_at(header, "[", ANSI_CYAN),
         "brackets around the language name should be uncolored, header: {header:?}",
+    );
+}
+
+/// When both sides name the same file (git-style diff), the filename appears
+/// only on the left.  Language tag is always left-only.
+#[test]
+fn same_filename_is_not_repeated_on_right() {
+    let profile = languages::profile_for_ext("py").expect("python profile");
+    let result = diff_sources(b"x = 1\n", b"x = 2\n", profile, &DiffOptions::default())
+        .expect("diff failed");
+    let output = format_side_by_side(&SideBySideInput {
+        source_bytes: b"x = 1\n",
+        destination_bytes: b"x = 2\n",
+        source_tree: &result.src_tree,
+        destination_tree: &result.dst_tree,
+        mapping: &result.mapping,
+        actions: &result.actions,
+        source_filename: Some("app.py"),
+        destination_filename: Some("app.py"),
+        language_name: Some("Python"),
+        terminal_width: None,
+        first_file: true,
+        last_file: true,
+    });
+    let header = output
+        .lines()
+        .find(|line| strip_ansi(line).contains("app.py"))
+        .expect("output has a header line");
+    let clean = strip_ansi(header);
+    let parts: Vec<&str> = clean.split('│').collect();
+
+    assert!(
+        parts[1].contains("app.py"),
+        "left cell should have filename, got {:?}",
+        parts[1],
+    );
+    assert!(
+        !parts[3].contains("app.py"),
+        "right cell must not repeat the filename, got {:?}",
+        parts[3],
     );
 }
 
@@ -948,7 +993,11 @@ fn long_filename_wraps_without_breaking_layout() {
         "the tail of the wrapped filename must appear, header lines: {lines:?}",
     );
     assert!(
-        header_text.starts_with("directory/"),
+        header_text.starts_with("[Python]"),
+        "the header should start with the language tag, header lines: {lines:?}",
+    );
+    assert!(
+        header_text.contains("directory/"),
         "the head of the wrapped filename must appear, header lines: {lines:?}",
     );
 }

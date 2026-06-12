@@ -494,22 +494,15 @@ enum HeaderStyle {
     Language,
 }
 
-/// Builds one header cell as styled spans: `filename [Language]`.
+/// Builds one header cell as styled spans: `[Language] filename`.
 fn header_spans<'a>(
     filename: Option<&'a str>,
     language_name: Option<&'a str>,
 ) -> Vec<Span<'a, HeaderStyle>> {
     let mut spans = Vec::new();
-    if let Some(name) = filename {
-        spans.push(Span {
-            text: name,
-            color: HeaderStyle::Filename,
-        });
-    }
     if let Some(language) = language_name {
-        let lead = if filename.is_some() { " [" } else { "[" };
         spans.push(Span {
-            text: lead,
+            text: "[",
             color: HeaderStyle::Plain,
         });
         spans.push(Span {
@@ -517,8 +510,14 @@ fn header_spans<'a>(
             color: HeaderStyle::Language,
         });
         spans.push(Span {
-            text: "]",
+            text: "] ",
             color: HeaderStyle::Plain,
+        });
+    }
+    if let Some(name) = filename {
+        spans.push(Span {
+            text: name,
+            color: HeaderStyle::Filename,
         });
     }
     spans
@@ -539,21 +538,33 @@ fn render_header_spans(spans: &[Span<HeaderStyle>]) -> String {
 /// (blank number cells, one filename per side), so the column separators run
 /// through it and the junctions of the rules above and below connect cleanly.
 /// Long filenames wrap onto further visual lines exactly like code rows do.
+///
+/// The language tag appears only on the left side (it is always the same for
+/// both).  When both sides name the same file (typical in git diffs), the
+/// filename is shown only on the left; the right side shows just its ref.
 fn render_file_header(
-    source_filename: Option<&str>,
-    destination_filename: Option<&str>,
-    language_name: Option<&str>,
+    input: &SideBySideInput,
     line_number_width: usize,
     content_width: usize,
     output: &mut String,
 ) {
     let separator = "│".dimmed();
     let number_blank = " ".repeat(line_number_width);
-    let left_lines = wrap_spans(&header_spans(source_filename, language_name), content_width);
-    let right_lines = wrap_spans(
-        &header_spans(destination_filename, language_name),
-        content_width,
+
+    let same_name = matches!(
+        (input.source_filename, input.destination_filename),
+        (Some(a), Some(b)) if a == b
     );
+
+    let left_spans = header_spans(input.source_filename, input.language_name);
+    let right_spans = if same_name {
+        Vec::new()
+    } else {
+        header_spans(input.destination_filename, None)
+    };
+
+    let left_lines = wrap_spans(&left_spans, content_width);
+    let right_lines = wrap_spans(&right_spans, content_width);
     let num_visual = left_lines.len().max(right_lines.len());
     for v in 0..num_visual {
         let left = left_lines.get(v).map_or_else(
@@ -658,7 +669,7 @@ pub fn format_side_by_side(input: &SideBySideInput) -> String {
 
     let hunks = extract_hunks(&rows, 3);
     let max_line_number = source_lines.len().max(destination_lines.len());
-    let line_number_width = format!("{max_line_number}").len().max(3);
+    let line_number_width = format!("{max_line_number}").len().max(4);
     let content_width = {
         // Layout: {line_num} │ {content} │ {line_num} │ {content}
         // Total  = 2*line_number_width + 2*content_width + 9  (three " │ " separators)
@@ -683,14 +694,7 @@ pub fn format_side_by_side(input: &SideBySideInput) -> String {
     if framed {
         let top = if input.first_file { '┬' } else { '┼' };
         render_separator(top, line_number_width, content_width, &mut output);
-        render_file_header(
-            input.source_filename,
-            input.destination_filename,
-            input.language_name,
-            line_number_width,
-            content_width,
-            &mut output,
-        );
+        render_file_header(input, line_number_width, content_width, &mut output);
         let below = if hunks.is_empty() && input.last_file {
             '┴'
         } else {
